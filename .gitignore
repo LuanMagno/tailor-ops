@@ -1,0 +1,17 @@
+# Clasp / Apps Script credentials & IDs
+.clasp.json
+.clasprc.json
+
+# Dependencies
+node_modules/
+
+# Environment variables & secrets
+.env
+.env.*
+
+# Test coverage
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
