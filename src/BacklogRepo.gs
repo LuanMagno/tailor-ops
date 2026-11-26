@@ -54,7 +54,9 @@ function listBacklogApplications(config) {
  */
 function createBacklogApplication(config, input) {
   const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(10000)) {
+    throw new Error('BUSY: Planilha ocupada por outra execução. Tente novamente em instantes.');
+  }
   try {
     const sheet = getBacklogSheet(config);
     const nowIso = Utilities.formatDate(new Date(), APP_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ssXXX");
@@ -102,7 +104,9 @@ function updateBacklogApplication(config, patch) {
 
   const targetId = patch.id.trim();
   const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(10000)) {
+    throw new Error('BUSY: Planilha ocupada por outra execução. Tente novamente em instantes.');
+  }
   try {
     const sheet = getBacklogSheet(config);
     const lastRow = sheet.getLastRow();

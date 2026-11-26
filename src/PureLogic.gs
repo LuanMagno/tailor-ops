@@ -21,7 +21,9 @@ const MAX_BOOKMARKLET_TEXT_LENGTH = 25000;
 const MAX_FILENAME_SEGMENT_LENGTH = 60;
 const MAX_SCREENSHOT_COUNT = 4;
 const MAX_IMAGE_BASE64_LENGTH = 7000000;
+const MAX_TOTAL_IMAGES_BASE64_LENGTH = 15000000;
 const MIN_EXTRACTED_TEXT_LENGTH = 300;
+const MAX_KEYWORDS = 15;
 const ALLOWED_IMAGE_MIME_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/webp']);
 const RETRYABLE_HTTP_STATUSES = Object.freeze([429, 500, 502, 503, 504]);
 
@@ -260,6 +262,8 @@ function validateAnalysisResult(payload) {
   }
   if (!isStringArray(payload.keywords)) {
     errors.push('Campo "keywords" deve ser um array não vazio de strings.');
+  } else if (payload.keywords.length > MAX_KEYWORDS) {
+    errors.push(`Campo "keywords" deve ter no máximo ${MAX_KEYWORDS} itens.`);
   }
 
   if (!isPlainObject(payload.gapAnalysis)) {
@@ -512,6 +516,11 @@ function validateImageAttachments(images) {
     normalized.push({ mimeType, data: base64Data });
   });
 
+  const totalLength = normalized.reduce((sum, img) => sum + img.data.length, 0);
+  if (totalLength > MAX_TOTAL_IMAGES_BASE64_LENGTH) {
+    errors.push('Tamanho total das imagens excede o limite da requisição. Comprima ou envie menos prints.');
+  }
+
   return {
     valid: errors.length === 0,
     normalized: errors.length === 0 ? normalized : [],
@@ -547,6 +556,7 @@ function normalizeHeadingForMatch(text) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
+    .replace(/\s*:\s*$/, '')
     .trim()
     .toUpperCase();
 }
@@ -667,7 +677,7 @@ function serializeBacklogRow(record) {
     : (typeof record.highlightsSummary === 'string' ? record.highlightsSummary : '');
   const metadata = isPlainObject(record.metadata) ? record.metadata : {};
 
-  return [
+  const cells = [
     typeof record.id === 'string' ? record.id : '',
     typeof record.createdAt === 'string' ? record.createdAt : '',
     typeof record.company === 'string' ? record.company : '',
@@ -683,6 +693,7 @@ function serializeBacklogRow(record) {
     typeof record.notes === 'string' ? record.notes : '',
     JSON.stringify(metadata),
   ];
+  return cells.map((value) => toSheetSafeText(value));
 }
 
 /**
@@ -692,7 +703,21 @@ function serializeBacklogRow(record) {
  */
 function deserializeBacklogRow(row) {
   const safeRow = Array.isArray(row) ? row : [];
-  const cell = (idx) => (safeRow[idx] === null || safeRow[idx] === undefined ? '' : String(safeRow[idx]));
+  const cell = (idx) => {
+    const value = safeRow[idx];
+    if (value === null || value === undefined) {
+      return '';
+    }
+    // Sheets may auto-convert ISO strings into Date cells; keep a sortable ISO string.
+    if (Object.prototype.toString.call(value) === '[object Date]') {
+      return Number.isNaN(value.getTime()) ? '' : value.toISOString();
+    }
+    const str = String(value);
+    if (str.length >= 2 && str[0] === "'" && /^[=+\-@]/.test(str[1])) {
+      return str.slice(1);
+    }
+    return str;
+  };
 
   let keywords = [];
   if (isNonEmptyString(cell(9))) {
@@ -738,6 +763,60 @@ function deserializeBacklogRow(row) {
 }
 
 /**
+ * Normalizes a Gemini model name from ScriptProperties (strips an optional "models/" prefix).
+ * @param {string} modelName
+ * @returns {string}
+ */
+function normalizeModelName(modelName) {
+  if (!isNonEmptyString(modelName)) {
+    return '';
+  }
+  return modelName.trim().replace(/^models\//i, '').trim();
+}
+
+/**
+ * Prevents Google Sheets from interpreting text as a formula (formula injection and
+ * "#ERROR!" cells for summaries starting with "-" bullets). Sheets stores the value
+ * without the leading apostrophe, so reads return the original text.
+ * @param {*} value
+ * @returns {*}
+ */
+function toSheetSafeText(value) {
+  if (typeof value === 'string' && /^[=+\-@]/.test(value)) {
+    return `'${value}`;
+  }
+  return value;
+}
+
+/**
+ * Heuristic 1-page guard: compares the edited resume against the cloned 1-page base.
+ * Apps Script cannot measure rendered pages, so growth in characters/paragraphs is used
+ * as a proxy to warn the user to review the document before applying.
+ * @param {{ baseChars: number, baseParagraphs: number, newChars: number, newParagraphs: number }} stats
+ * @param {{ charTolerance?: number, extraParagraphTolerance?: number }} [options]
+ * @returns {{ atRisk: boolean, charRatio: number, paragraphDelta: number }}
+ */
+function assessOnePageRisk(stats, options) {
+  const safe = isPlainObject(stats) ? stats : {};
+  const opts = isPlainObject(options) ? options : {};
+  const charTolerance = typeof opts.charTolerance === 'number' ? opts.charTolerance : 1.05;
+  const extraParagraphTolerance = typeof opts.extraParagraphTolerance === 'number'
+    ? opts.extraParagraphTolerance
+    : 2;
+
+  const baseChars = Number(safe.baseChars) || 0;
+  const newChars = Number(safe.newChars) || 0;
+  const paragraphDelta = (Number(safe.newParagraphs) || 0) - (Number(safe.baseParagraphs) || 0);
+  const charRatio = baseChars > 0 ? Math.round((newChars / baseChars) * 100) / 100 : 0;
+
+  return {
+    atRisk: (baseChars > 0 && charRatio > charTolerance) || paragraphDelta > extraParagraphTolerance,
+    charRatio,
+    paragraphDelta,
+  };
+}
+
+/**
  * Calculates the given percentile over an array of numeric values.
  * @param {number[]} values
  * @param {number} percentile Value in [0, 100].
@@ -765,7 +844,9 @@ if (typeof module !== 'undefined' && module.exports) {
     MAX_BOOKMARKLET_TEXT_LENGTH,
     MAX_SCREENSHOT_COUNT,
     MAX_IMAGE_BASE64_LENGTH,
+    MAX_TOTAL_IMAGES_BASE64_LENGTH,
     MIN_EXTRACTED_TEXT_LENGTH,
+    MAX_KEYWORDS,
     ALLOWED_IMAGE_MIME_TYPES,
     RETRYABLE_HTTP_STATUSES,
     SECTION_HEADINGS,
@@ -788,6 +869,9 @@ if (typeof module !== 'undefined' && module.exports) {
     buildIdempotencyKey,
     serializeBacklogRow,
     deserializeBacklogRow,
+    normalizeModelName,
+    toSheetSafeText,
+    assessOnePageRisk,
     calculatePercentile,
     computeSliSummary,
   };

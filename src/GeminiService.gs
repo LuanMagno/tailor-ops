@@ -5,6 +5,7 @@
 
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GEMINI_MAX_ATTEMPTS = 3;
+const GEMINI_MAX_RETRY_AFTER_MS = 20000;
 
 /**
  * Returns the strict responseSchema for Step 1 (`analyzeJob`).
@@ -20,6 +21,8 @@ function getAnalyzeJobResponseSchema() {
       keywords: {
         type: 'ARRAY',
         items: { type: 'STRING' },
+        minItems: 1,
+        maxItems: 15,
       },
       gapAnalysis: {
         type: 'OBJECT',
@@ -70,13 +73,14 @@ function getGenerateResumeResponseSchema() {
       summary: { type: 'STRING' },
       experiences: {
         type: 'ARRAY',
+        minItems: 1,
         items: {
           type: 'OBJECT',
           properties: {
             company: { type: 'STRING' },
             role: { type: 'STRING' },
             period: { type: 'STRING' },
-            bullets: { type: 'ARRAY', items: { type: 'STRING' } },
+            bullets: { type: 'ARRAY', items: { type: 'STRING' }, minItems: 1 },
           },
           required: ['company', 'role', 'period', 'bullets'],
         },
@@ -84,15 +88,20 @@ function getGenerateResumeResponseSchema() {
       skills: {
         type: 'ARRAY',
         items: { type: 'STRING' },
+        minItems: 4,
+        maxItems: 5,
       },
       education: {
         type: 'ARRAY',
         items: { type: 'STRING' },
+        minItems: 1,
       },
       courses: { type: 'STRING' },
       highlightsSummary: {
         type: 'ARRAY',
         items: { type: 'STRING' },
+        minItems: 3,
+        maxItems: 5,
       },
       gapsSummary: { type: 'STRING' },
     },
@@ -110,7 +119,46 @@ function getGenerateResumeResponseSchema() {
 }
 
 /**
- * Executes a Gemini generateContent REST request with exponential backoff + jitter retry.
+ * Extracts the concatenated answer text from a generateContent response, ignoring
+ * "thought" parts emitted by thinking models.
+ * @param {object} decoded
+ * @returns {string}
+ */
+function extractCandidateText(decoded) {
+  const candidate = decoded && Array.isArray(decoded.candidates) ? decoded.candidates[0] : null;
+  const parts = candidate && candidate.content && Array.isArray(candidate.content.parts)
+    ? candidate.content.parts
+    : [];
+  return parts
+    .filter((part) => part && typeof part.text === 'string' && part.thought !== true)
+    .map((part) => part.text)
+    .join('')
+    .trim();
+}
+
+/**
+ * Computes how long to wait before the next retry, honoring Retry-After when present.
+ * @param {number} attempt
+ * @param {GoogleAppsScript.URL_Fetch.HTTPResponse} [response]
+ * @returns {number}
+ */
+function computeGeminiRetryDelayMs(attempt, response) {
+  const backoff = calculateBackoffDelayMs(attempt);
+  if (!response) {
+    return backoff;
+  }
+  const headers = response.getHeaders() || {};
+  const retryAfterRaw = headers['Retry-After'] || headers['retry-after'];
+  const retryAfterSeconds = Number(retryAfterRaw);
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(GEMINI_MAX_RETRY_AFTER_MS, Math.max(backoff, retryAfterSeconds * 1000));
+  }
+  return backoff;
+}
+
+/**
+ * Executes a Gemini generateContent REST request with exponential backoff + jitter retry
+ * (up to GEMINI_MAX_ATTEMPTS attempts for HTTP 429/500/502/503/504 and network errors).
  * @param {ReturnType<typeof getAppConfig>} config
  * @param {{
  *   model: string,
@@ -120,10 +168,14 @@ function getGenerateResumeResponseSchema() {
  *   temperature?: number,
  *   trace?: object
  * }} options
- * @returns {{ parsed: object, modelUsed: string, tokensIn: number, tokensOut: number }}
+ * @returns {{ parsed: object, modelUsed: string, tokensIn: number, tokensOut: number, attempts: number }}
  */
 function callGeminiGenerateContent(config, options) {
-  const model = options.model;
+  const model = normalizeModelName(options.model);
+  if (!model) {
+    throw new Error('CONFIG_MISSING: Nome do modelo Gemini ausente.');
+  }
+
   const endpoint = `${GEMINI_API_BASE_URL}/${encodeURIComponent(model)}:generateContent`;
   const payload = {
     systemInstruction: {
@@ -141,32 +193,33 @@ function callGeminiGenerateContent(config, options) {
       responseSchema: options.responseSchema,
     },
   };
+  const requestBody = JSON.stringify(payload);
 
   const trace = options.trace || null;
-  // TODO(observability): iniciar span 'gemini' e registrar model_used via trace.setModel(model).
-  if (trace && typeof trace.setModel === 'function') {
+  // TODO(observability): iniciar span 'gemini' (trace.startSpan('gemini')).
+  if (trace) {
     trace.setModel(model);
   }
 
   let lastError = null;
   for (let attempt = 0; attempt < GEMINI_MAX_ATTEMPTS; attempt += 1) {
+    const isLastAttempt = attempt === GEMINI_MAX_ATTEMPTS - 1;
     let response;
     try {
       response = UrlFetchApp.fetch(endpoint, {
         method: 'post',
         contentType: 'application/json',
-        headers: {
-          'x-goog-api-key': config.geminiApiKey,
-        },
-        payload: JSON.stringify(payload),
+        headers: { 'x-goog-api-key': config.geminiApiKey },
+        payload: requestBody,
         muteHttpExceptions: true,
       });
     } catch (networkErr) {
       lastError = new Error(
         `GEMINI_NETWORK: ${networkErr && networkErr.message ? networkErr.message : String(networkErr)}`
       );
-      if (attempt < GEMINI_MAX_ATTEMPTS - 1) {
-        Utilities.sleep(calculateBackoffDelayMs(attempt));
+      // TODO(observability): trace.log('WARN', 'gemini_network_retry', { attempt }).
+      if (!isLastAttempt) {
+        Utilities.sleep(computeGeminiRetryDelayMs(attempt));
         continue;
       }
       throw lastError;
@@ -183,17 +236,20 @@ function callGeminiGenerateContent(config, options) {
         throw new Error('SCHEMA_INVALID: Resposta da API Gemini não é um JSON válido.');
       }
 
-      const candidateText =
-        decoded &&
-        Array.isArray(decoded.candidates) &&
-        decoded.candidates[0] &&
-        decoded.candidates[0].content &&
-        Array.isArray(decoded.candidates[0].content.parts) &&
-        decoded.candidates[0].content.parts[0] &&
-        typeof decoded.candidates[0].content.parts[0].text === 'string'
-          ? decoded.candidates[0].content.parts[0].text
-          : '';
+      if (decoded.promptFeedback && decoded.promptFeedback.blockReason) {
+        throw new Error(`GEMINI_BLOCKED: Requisição bloqueada pela API (${decoded.promptFeedback.blockReason}).`);
+      }
 
+      const candidate = Array.isArray(decoded.candidates) ? decoded.candidates[0] : null;
+      const finishReason = candidate && candidate.finishReason ? candidate.finishReason : '';
+      if (finishReason === 'MAX_TOKENS') {
+        throw new Error('GEMINI_MAX_TOKENS: Resposta do modelo truncada por limite de tokens.');
+      }
+      if (finishReason === 'SAFETY' || finishReason === 'RECITATION' || finishReason === 'PROHIBITED_CONTENT') {
+        throw new Error(`GEMINI_BLOCKED: Resposta interrompida pelo modelo (${finishReason}).`);
+      }
+
+      const candidateText = extractCandidateText(decoded);
       if (!candidateText) {
         throw new Error('SCHEMA_INVALID: Resposta da API Gemini veio sem conteúdo textual.');
       }
@@ -209,8 +265,8 @@ function callGeminiGenerateContent(config, options) {
       const tokensIn = typeof usage.promptTokenCount === 'number' ? usage.promptTokenCount : 0;
       const tokensOut = typeof usage.candidatesTokenCount === 'number' ? usage.candidatesTokenCount : 0;
 
-      // TODO(observability): registrar tokens via trace.addTokens(tokensIn, tokensOut) e encerrar span 'gemini'.
-      if (trace && typeof trace.addTokens === 'function') {
+      // TODO(observability): registrar tokens e encerrar span 'gemini' (trace.endSpan('gemini')).
+      if (trace) {
         trace.addTokens(tokensIn, tokensOut);
       }
 
@@ -219,18 +275,21 @@ function callGeminiGenerateContent(config, options) {
         modelUsed: model,
         tokensIn,
         tokensOut,
+        attempts: attempt + 1,
       };
     }
 
     if (isRetryableHttpStatus(statusCode)) {
       lastError = new Error(`GEMINI_${statusCode}: Erro transitório da API Gemini (HTTP ${statusCode}).`);
-      if (attempt < GEMINI_MAX_ATTEMPTS - 1) {
-        Utilities.sleep(calculateBackoffDelayMs(attempt));
+      // TODO(observability): trace.log('WARN', 'gemini_retry', { attempt, statusCode }).
+      if (!isLastAttempt) {
+        Utilities.sleep(computeGeminiRetryDelayMs(attempt, response));
         continue;
       }
       throw lastError;
     }
 
+    // Non-retryable 4xx: fail fast (never echo request data or the API key).
     throw new Error(`GEMINI_${statusCode}: Erro da API Gemini (HTTP ${statusCode}): ${rawBody.slice(0, 300)}`);
   }
 
@@ -255,12 +314,14 @@ function callGeminiGenerateContent(config, options) {
 function analyzeJobWithGemini(config, params) {
   const systemInstruction = [
     'Você é o motor ATS TailorOps executando RIGOROSAMENTE as Etapas 1, 2 e 3 da Master Database do candidato.',
+    'Siga as instruções e regras escritas na própria Master Database; em caso de conflito, a Master Database prevalece.',
     'Regras obrigatórias:',
     '1) Nunca invente fatos, experiências ou tecnologias que não constem na Master Database.',
-    '2) Detecte o idioma principal da vaga ("PT" ou "EN") e extraia exatamente 15 palavras-chave técnicas/competências mais relevantes exatamente como escritas na vaga.',
+    '2) Detecte o idioma principal da vaga ("PT" ou "EN") e extraia exatamente as 15 palavras-chave técnicas/competências mais importantes, exatamente como escritas na vaga (ou menos, se a vaga não tiver 15).',
     '3) Compare os requisitos da vaga contra a Master Database e o Currículo ATS Base, classificando em gapAnalysis: hasPracticalContext, underHighlighted e realGaps.',
-    '4) Gere validationQuestions objetivas para a Pausa Obrigatória da Etapa 3 sempre que houver tecnologias/práticas da vaga com possível vivência não explícita ou sub-destacada.',
+    '4) Gere validationQuestions objetivas (ids únicos "q1", "q2"...) para a Pausa Obrigatória da Etapa 3 sempre que houver tecnologias/práticas da vaga com possível vivência não explícita ou sub-destacada.',
     '5) Produza extractedJobSummary com resumo limpo e completo dos requisitos, responsabilidades e stack da vaga para uso posterior na Etapa 4.',
+    '6) Se houver imagens anexadas, elas são prints da vaga: transcreva e use o conteúdo delas como descrição da vaga.',
   ].join('\n');
 
   const promptText = [
@@ -272,20 +333,20 @@ function analyzeJobWithGemini(config, params) {
     '',
     '=== DADOS DA VAGA ===',
     `URL: ${params.jobUrl}`,
-    params.text ? `DESCRIÇÃO EXTRAÍDA:\n${params.text}` : 'DESCRIÇÃO EXTRAÍDA: (analisar imagens anexadas abaixo)',
+    params.text
+      ? `DESCRIÇÃO EXTRAÍDA:\n${params.text}`
+      : 'DESCRIÇÃO EXTRAÍDA: (sem texto — analisar os prints da vaga anexados nesta mensagem)',
   ].join('\n');
 
   const parts = [{ text: promptText }];
-  if (Array.isArray(params.images)) {
-    params.images.forEach((img) => {
-      parts.push({
-        inlineData: {
-          mimeType: img.mimeType,
-          data: img.data,
-        },
-      });
+  (Array.isArray(params.images) ? params.images : []).forEach((img) => {
+    parts.push({
+      inlineData: {
+        mimeType: img.mimeType,
+        data: img.data,
+      },
     });
-  }
+  });
 
   const result = callGeminiGenerateContent(config, {
     model: params.model,
@@ -295,6 +356,10 @@ function analyzeJobWithGemini(config, params) {
     temperature: 0.2,
     trace: params.trace,
   });
+
+  if (result.parsed && Array.isArray(result.parsed.keywords) && result.parsed.keywords.length > MAX_KEYWORDS) {
+    result.parsed.keywords = result.parsed.keywords.slice(0, MAX_KEYWORDS);
+  }
 
   const validation = validateAnalysisResult(result.parsed);
   if (!validation.valid) {
@@ -332,15 +397,18 @@ function analyzeJobWithGemini(config, params) {
 function generateResumeWithGemini(config, params) {
   const systemInstruction = [
     'Você é o motor ATS TailorOps executando RIGOROSAMENTE a Etapa 4 da Master Database após a validação da Etapa 3.',
+    'Siga as instruções e regras escritas na própria Master Database; em caso de conflito, a Master Database prevalece.',
     'Regras inegociáveis:',
-    '1) Zero alucinação: use exclusivamente fatos da Master Database ou explicitamente confirmados pelo candidato nas respostas da Etapa 3.',
-    '2) Escreva todo o currículo no idioma alvo ("PT" ou "EN") com verbos de ação fortes no passado em todos os bullets (nunca use "Responsável por...").',
+    '1) Zero alucinação: use exclusivamente fatos da Master Database ou explicitamente confirmados pelo candidato nas respostas da Etapa 3 (validationAnswers com include=true). Itens com include=false NÃO podem aparecer no currículo.',
+    '2) Escreva todo o currículo no idioma alvo (targetLanguage "PT" ou "EN") com verbos de ação fortes no passado em todos os bullets (nunca use "Responsável por..." / "Responsible for...").',
     '3) summary: 3 a 4 linhas diretas alinhadas à vaga.',
-    '4) experiences: priorize Fit Energia e dti digital; inclua Monitoria / Projeto Beira Linha / outros projetos da Seção 5 somente se diretamente relevantes à vaga e mantendo extensão total de 1 página.',
-    '5) skills: 4 a 5 linhas no formato exato "Categoria: item1 | item2 | item3", priorizando keywords no início. NUNCA escreva "(Em estudo)" ou "(em aprendizado)".',
-    '6) courses: 1 única linha separada por " | ".',
-    '7) highlightsSummary: 3 a 5 bullets curtos explicando o foco aplicado para preparar o candidato para entrevista.',
-    '8) gapsSummary: texto objetivo resumindo lacunas reais e decisões confirmadas na Etapa 3.',
+    '4) experiences: priorize Fit Energia e dti digital; inclua Monitoria / Projeto Beira Linha / projetos da Seção 5 somente se diretamente relevantes à vaga e se couberem mantendo o currículo em 1 página. Mantenha a quantidade de bullets próxima à do Currículo ATS Base.',
+    '5) skills: 4 a 5 linhas no formato exato "Categoria: item1 | item2 | item3", priorizando as keywords da vaga no início. NUNCA escreva "(Em estudo)" ou "(em aprendizado)".',
+    '6) education: entradas da Formação Acadêmica conforme a Master Database.',
+    '7) courses: 1 única linha separada por " | ".',
+    '8) highlightsSummary: 3 a 5 bullets curtos explicando o foco aplicado, para preparação de entrevista.',
+    '9) gapsSummary: texto objetivo resumindo lacunas reais e decisões confirmadas na Etapa 3.',
+    '10) language: retorne exatamente o targetLanguage informado.',
   ].join('\n');
 
   const promptText = [
@@ -376,6 +444,11 @@ function generateResumeWithGemini(config, params) {
     temperature: 0.3,
     trace: params.trace,
   });
+
+  // The language chosen by the user in the Step 3 pause always wins (drives heading translation).
+  if (result.parsed && typeof result.parsed === 'object') {
+    result.parsed.language = params.language === 'EN' ? 'EN' : 'PT';
+  }
 
   const validation = validateGeneratedResume(result.parsed);
   if (!validation.valid) {

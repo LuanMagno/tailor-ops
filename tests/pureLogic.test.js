@@ -7,6 +7,7 @@ const {
   BOOKMARKLET_PREFIX,
   MAX_BOOKMARKLET_TEXT_LENGTH,
   MAX_SCREENSHOT_COUNT,
+  MAX_TOTAL_IMAGES_BASE64_LENGTH,
   RETRYABLE_HTTP_STATUSES,
   BACKLOG_HEADERS,
   isValidApplicationStatus,
@@ -27,6 +28,9 @@ const {
   buildIdempotencyKey,
   serializeBacklogRow,
   deserializeBacklogRow,
+  normalizeModelName,
+  toSheetSafeText,
+  assessOnePageRisk,
 } = require('../src/PureLogic.gs');
 
 describe('APPLICATION_STATUSES and isValidApplicationStatus', () => {
@@ -450,5 +454,92 @@ describe('serializeBacklogRow and deserializeBacklogRow', () => {
     expect(parsed.status).toBe('Gerado');
     expect(parsed.keywords).toEqual([]);
     expect(parsed.metadata).toEqual({});
+  });
+
+  it('escapes formula-like prefixes via toSheetSafeText and round-trips bullets cleanly', () => {
+    expect(toSheetSafeText('- Destaque 1')).toBe("'- Destaque 1");
+    expect(toSheetSafeText('=IMPORTXML("x")')).toBe("'=IMPORTXML(\"x\")");
+    expect(toSheetSafeText('Texto normal')).toBe('Texto normal');
+
+    const row = serializeBacklogRow({
+      id: 'APP-20261126-SAFE',
+      createdAt: '2026-11-26T01:00:00-03:00',
+      company: 'Empresa',
+      role: 'Cargo',
+      language: 'PT',
+      status: 'Gerado',
+      jobUrl: 'https://example.com/vaga',
+      docUrl: 'https://docs.google.com/document/d/1/edit',
+      pdfUrl: 'https://docs.google.com/document/d/1/export?format=pdf',
+      keywords: ['Go'],
+      highlightsSummary: ['- Foco em microsserviços', '- Observabilidade'],
+      gapsSummary: '+ Docker confirmado',
+      notes: '=Nota com sinal igual',
+      metadata: {},
+    });
+    expect(row[10].startsWith("'-")).toBe(true);
+    expect(row[12]).toBe("'=Nota com sinal igual");
+
+    const roundTripped = deserializeBacklogRow(row);
+    expect(roundTripped.highlightsSummary).toBe('- Foco em microsserviços\n- Observabilidade');
+    expect(roundTripped.gapsSummary).toBe('+ Docker confirmado');
+    expect(roundTripped.notes).toBe('=Nota com sinal igual');
+  });
+
+  it('converts Date cells returned by Google Sheets into ISO strings', () => {
+    const dateCell = new Date('2026-11-26T03:00:00.000Z');
+    const parsed = deserializeBacklogRow([
+      'APP-20261126-DATE',
+      dateCell,
+      'Acme',
+      'SRE',
+      'PT',
+      'Gerado',
+      'https://acme.com/jobs/1',
+      'https://docs.google.com/document/d/1/edit',
+      'https://docs.google.com/document/d/1/export?format=pdf',
+      '[]',
+      '',
+      '',
+      '',
+      '{}',
+    ]);
+    expect(parsed.createdAt).toBe('2026-11-26T03:00:00.000Z');
+  });
+});
+
+describe('normalizeModelName, assessOnePageRisk, and anchor/image edge cases', () => {
+  it('strips leading models/ prefix from Gemini model identifiers', () => {
+    expect(normalizeModelName('models/gemini-2.5-pro')).toBe('gemini-2.5-pro');
+    expect(normalizeModelName('  gemini-2.5-flash  ')).toBe('gemini-2.5-flash');
+    expect(normalizeModelName('')).toBe('');
+  });
+
+  it('flags 1-page overflow risk when character ratio or paragraph delta exceeds tolerance', () => {
+    expect(
+      assessOnePageRisk({ baseChars: 3000, baseParagraphs: 25, newChars: 3050, newParagraphs: 26 })
+    ).toEqual({ atRisk: false, charRatio: 1.02, paragraphDelta: 1 });
+
+    expect(
+      assessOnePageRisk({ baseChars: 3000, baseParagraphs: 25, newChars: 3500, newParagraphs: 25 }).atRisk
+    ).toBe(true);
+
+    expect(
+      assessOnePageRisk({ baseChars: 3000, baseParagraphs: 25, newChars: 3000, newParagraphs: 29 }).atRisk
+    ).toBe(true);
+  });
+
+  it('detects section headings with trailing colons and rejects oversized combined images', () => {
+    expect(detectSectionAnchor('RESUMO PROFISSIONAL:')).toBe('summary');
+    expect(detectSectionAnchor('TECHNICAL SKILLS:')).toBe('skills');
+
+    const chunk = 'QUJD'.repeat(Math.ceil(MAX_TOTAL_IMAGES_BASE64_LENGTH / 12));
+    const result = validateImageAttachments([
+      { mimeType: 'image/jpeg', data: chunk },
+      { mimeType: 'image/jpeg', data: chunk },
+      { mimeType: 'image/jpeg', data: chunk },
+      { mimeType: 'image/jpeg', data: chunk },
+    ]);
+    expect(result.valid).toBe(false);
   });
 });

@@ -17,6 +17,7 @@ const ANTI_BOT_PATTERNS = [
   /attention required!\s*\|\s*cloudflare/i,
   /access denied/i,
   /captcha/i,
+  /target url returned error\s*\d{3}/i,
 ];
 
 /**
