@@ -1,0 +1,1765 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TailorOps — ATS Resume &amp; Backlog</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased selection:bg-indigo-500 selection:text-white">
+  <!-- Top App Header -->
+  <header class="sticky top-0 z-30 bg-slate-950/90 backdrop-blur border-b border-slate-800">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-600/20 shrink-0">
+          TO
+        </div>
+        <div class="truncate">
+          <h1 class="text-base sm:text-lg font-bold tracking-tight text-white leading-tight">TailorOps</h1>
+          <p class="text-xs text-slate-400 truncate">Currículos ATS &amp; Backlog de Vagas</p>
+        </div>
+      </div>
+
+      <button
+        id="btnOpenBookmarkletModal"
+        type="button"
+        class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition min-h-[40px] shrink-0"
+      >
+        <span>🔖</span>
+        <span class="hidden sm:inline">Configurar</span>
+        <span>Bookmarklet (PC)</span>
+      </button>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="max-w-4xl mx-auto px-4 flex gap-1 border-t border-slate-900/80" aria-label="Navegação principal">
+      <button
+        type="button"
+        data-tab="wizard"
+        class="nav-tab flex-1 py-3 text-xs sm:text-sm font-semibold border-b-2 border-indigo-500 text-indigo-400 transition min-h-[44px]"
+      >
+        ✨ Nova Vaga
+      </button>
+      <button
+        type="button"
+        data-tab="backlog"
+        class="nav-tab flex-1 py-3 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition min-h-[44px] flex items-center justify-center gap-1.5"
+      >
+        <span>📋 Backlog</span>
+        <span id="backlogTabCount" class="px-1.5 py-0.5 text-[11px] rounded-full bg-slate-800 text-slate-300">0</span>
+      </button>
+      <button
+        type="button"
+        data-tab="metrics"
+        class="nav-tab flex-1 py-3 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200 transition min-h-[44px]"
+      >
+        📊 Métricas
+      </button>
+    </nav>
+  </header>
+
+  <!-- Main Content -->
+  <main class="max-w-4xl mx-auto px-4 py-5 pb-20">
+    <!-- Environment warning if opened outside Google Apps Script -->
+    <div id="gasEnvWarning" class="hidden mb-4 p-3.5 rounded-xl bg-amber-950/60 border border-amber-700/60 text-amber-200 text-xs">
+      Ambiente local detectado (<code class="font-mono">google.script.run</code> indisponível). Publique via <code class="font-mono">clasp push</code> para executar chamadas reais ao Drive, Docs, Sheets e Gemini.
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- ABA 1: NOVA VAGA (WIZARD 2 PASSOS + PAUSA ETAPA 3 + FINAL) -->
+    <!-- ========================================================= -->
+    <section id="tab-wizard" class="space-y-5">
+      <!-- Wizard Stepper -->
+      <div class="grid grid-cols-3 gap-2 text-center text-xs font-medium">
+        <div id="stepBadge1" class="py-2 px-2 rounded-lg bg-indigo-600/20 border border-indigo-500/50 text-indigo-300">
+          1. Captura &amp; Análise
+        </div>
+        <div id="stepBadge2" class="py-2 px-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-500">
+          2. Pausa Etapa 3
+        </div>
+        <div id="stepBadge3" class="py-2 px-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-500">
+          3. Currículo Pronto
+        </div>
+      </div>
+
+      <!-- STEP 1: CAPTURA E ANÁLISE -->
+      <div id="wizardStep1" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-5 shadow-xl">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 class="text-base sm:text-lg font-bold text-white">Capturar e Analisar Vaga</h2>
+            <p class="text-xs text-slate-400">Lê ao vivo sua Master Database e o Currículo ATS Base no Drive.</p>
+          </div>
+          <button
+            id="btnPasteBookmarklet"
+            type="button"
+            class="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-300 border border-indigo-500/40 text-xs font-semibold transition min-h-[44px]"
+          >
+            <span>📋</span>
+            <span>Colar Captura (Bookmarklet)</span>
+          </button>
+        </div>
+
+        <!-- Dynamic Fallback Banner (NEEDS_MANUAL_TEXT or Errors) -->
+        <div id="step1Alert" class="hidden p-3.5 rounded-xl border text-xs leading-relaxed"></div>
+
+        <!-- Job URL -->
+        <div class="space-y-1.5">
+          <label for="inputJobUrl" class="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+            Link da Vaga <span class="text-rose-400">*</span>
+          </label>
+          <input
+            id="inputJobUrl"
+            type="url"
+            required
+            placeholder="https://www.linkedin.com/jobs/view/..."
+            class="w-full px-3.5 py-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm text-white placeholder-slate-500 outline-none min-h-[46px]"
+          />
+        </div>
+
+        <!-- Model Tier Selector -->
+        <div class="space-y-1.5">
+          <span class="block text-xs font-semibold uppercase tracking-wider text-slate-300">Modelo Gemini</span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <label class="cursor-pointer">
+              <input type="radio" name="modelTier" value="HIGH" checked class="peer sr-only" />
+              <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 peer-checked:border-indigo-500 peer-checked:bg-indigo-950/30 transition">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-semibold text-white">Qualidade Máxima</span>
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-medium">Padrão</span>
+                </div>
+                <p id="modelHighLabel" class="text-xs text-slate-400 mt-0.5 truncate">Raciocínio profundo (MODEL_HIGH)</p>
+              </div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="radio" name="modelTier" value="FAST" class="peer sr-only" />
+              <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 peer-checked:border-indigo-500 peer-checked:bg-indigo-950/30 transition">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-semibold text-white">Rápido</span>
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium">Flash</span>
+                </div>
+                <p id="modelFastLabel" class="text-xs text-slate-400 mt-0.5 truncate">Menor latência / economia de cota (MODEL_FAST)</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Mobile Screenshot Upload (Max 4, compressed via canvas) -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-300">
+              Prints da Vaga (Celular — até 4 imagens)
+            </label>
+            <span id="screenshotCountLabel" class="text-xs text-slate-400">0 / 4 anexados</span>
+          </div>
+          <label
+            for="inputScreenshots"
+            class="flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-slate-700 hover:border-indigo-500 bg-slate-950/60 cursor-pointer transition text-center min-h-[84px]"
+          >
+            <span class="text-sm font-medium text-slate-200">📸 Toque para selecionar prints (PNG, JPEG, WebP)</span>
+            <span class="text-xs text-slate-400 mt-0.5">Compressão automática no navegador (máx. 1400px, JPEG 82%)</span>
+            <input id="inputScreenshots" type="file" accept="image/png,image/jpeg,image/webp" multiple class="hidden" />
+          </label>
+          <div id="screenshotPreviewGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5"></div>
+        </div>
+
+        <!-- Manual Textarea / Bookmarklet Decoded Text -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label for="inputManualText" class="text-xs font-semibold uppercase tracking-wider text-slate-300">
+              Descrição da Vaga (Texto Manual ou Bookmarklet)
+            </label>
+            <span id="manualCharCount" class="text-xs text-slate-500">0 chars</span>
+          </div>
+          <textarea
+            id="inputManualText"
+            rows="6"
+            placeholder="Opcional se você enviou prints ou se a URL for aberta. Se o site bloquear leitura automática (LinkedIn, Indeed, Glassdoor, Catho), cole aqui o texto da vaga ou um payload TAILOROPS_CAPTURE::..."
+            class="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm text-slate-100 placeholder-slate-500 outline-none resize-y"
+          ></textarea>
+        </div>
+
+        <!-- Primary Action -->
+        <div class="flex flex-col sm:flex-row gap-2.5 pt-1">
+          <button
+            id="btnAnalyzeJob"
+            type="button"
+            class="flex-1 py-3.5 px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-lg shadow-indigo-600/25 transition min-h-[48px] flex items-center justify-center gap-2"
+          >
+            <span id="btnAnalyzeSpinner" class="hidden w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+            <span id="btnAnalyzeLabel">Analisar Vaga (Etapas 1 a 3)</span>
+          </button>
+          <button
+            id="btnResetWizard"
+            type="button"
+            class="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition min-h-[48px]"
+          >
+            Limpar
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 2: PAUSA OBRIGATÓRIA DA ETAPA 3 -->
+      <div id="wizardStep2" class="hidden space-y-5">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-5 shadow-xl">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <div>
+              <span class="text-[11px] font-bold uppercase tracking-wider text-amber-400">Pausa Obrigatória — Etapa 3</span>
+              <h2 class="text-base sm:text-lg font-bold text-white">Validação de Aderência e Lacunas</h2>
+            </div>
+            <span id="step2MetaBadge" class="text-xs px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 font-mono"></span>
+          </div>
+
+          <div id="step2Alert" class="hidden p-3.5 rounded-xl border text-xs leading-relaxed"></div>
+
+          <!-- Editable Company / Role / Language -->
+          <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            <div class="sm:col-span-5 space-y-1">
+              <label for="editCompany" class="block text-xs font-semibold text-slate-300">Empresa</label>
+              <input
+                id="editCompany"
+                type="text"
+                class="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 text-sm text-white outline-none min-h-[44px]"
+              />
+            </div>
+            <div class="sm:col-span-5 space-y-1">
+              <label for="editRole" class="block text-xs font-semibold text-slate-300">Cargo</label>
+              <input
+                id="editRole"
+                type="text"
+                class="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 text-sm text-white outline-none min-h-[44px]"
+              />
+            </div>
+            <div class="sm:col-span-2 space-y-1">
+              <label for="editLanguage" class="block text-xs font-semibold text-slate-300">Idioma</label>
+              <select
+                id="editLanguage"
+                class="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 text-sm text-white outline-none min-h-[44px]"
+              >
+                <option value="PT">PT-BR</option>
+                <option value="EN">EN</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 15 Keywords -->
+          <div class="space-y-2">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300">15 Palavras-Chave ATS da Vaga</h3>
+            <div id="analysisKeywordsList" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Gap Analysis 3 Blocks -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-800/50 space-y-2">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-300">✅ Contexto Prático</h4>
+              <ul id="gapPracticalList" class="text-xs text-slate-200 space-y-1 list-disc list-inside"></ul>
+            </div>
+            <div class="p-3.5 rounded-xl bg-amber-950/30 border border-amber-800/50 space-y-2">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-amber-300">⚡ Sub-destacado no Base</h4>
+              <ul id="gapUnderList" class="text-xs text-slate-200 space-y-1 list-disc list-inside"></ul>
+            </div>
+            <div class="p-3.5 rounded-xl bg-rose-950/30 border border-rose-800/50 space-y-2">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-rose-300">🚧 Lacunas Reais</h4>
+              <ul id="gapRealList" class="text-xs text-slate-200 space-y-1 list-disc list-inside"></ul>
+            </div>
+          </div>
+
+          <!-- Interactive Validation Questions -->
+          <div class="space-y-2.5">
+            <div>
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300">Confirmação de Tecnologias e Experiências</h3>
+              <p class="text-xs text-slate-400">Defina o que deve ou não entrar no currículo final e adicione contexto real se desejar.</p>
+            </div>
+            <div id="validationQuestionsContainer" class="space-y-3"></div>
+          </div>
+
+          <!-- Optional Extra Instructions -->
+          <div class="space-y-1.5">
+            <label for="inputExtraInstructions" class="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+              Instruções extras para esta versão (opcional)
+            </label>
+            <textarea
+              id="inputExtraInstructions"
+              rows="2"
+              placeholder="Ex.: Dar maior ênfase à experiência na Fit Energia com integrações Python..."
+              class="w-full p-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 text-sm text-white placeholder-slate-500 outline-none"
+            ></textarea>
+          </div>
+
+          <!-- Step 2 Actions -->
+          <div class="flex flex-col-reverse sm:flex-row gap-2.5 pt-2">
+            <button
+              id="btnBackToStep1"
+              type="button"
+              class="py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold transition min-h-[48px]"
+            >
+              ← Voltar
+            </button>
+            <button
+              id="btnGenerateResume"
+              type="button"
+              class="flex-1 py-3.5 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm shadow-lg shadow-emerald-600/25 transition min-h-[48px] flex items-center justify-center gap-2"
+            >
+              <span id="btnGenerateSpinner" class="hidden w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+              <span id="btnGenerateLabel">Gerar Currículo ATS</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3: TELA DE CONCLUSÃO -->
+      <div id="wizardStep3" class="hidden space-y-5">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-5 shadow-xl">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <span class="inline-block text-xs font-bold uppercase tracking-wider text-emerald-400">Currículo Gerado &amp; Salvo no Backlog</span>
+              <h2 id="doneFilename" class="text-base sm:text-lg font-bold text-white mt-0.5 break-words"></h2>
+              <p id="doneMeta" class="text-xs text-slate-400 mt-1"></p>
+            </div>
+          </div>
+
+          <div id="doneWarnings" class="hidden p-3.5 rounded-xl bg-amber-950/50 border border-amber-700/60 text-amber-200 text-xs space-y-1"></div>
+
+          <!-- 4 Large Mobile-First Action Buttons -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <a
+              id="btnDownloadPdf"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="py-4 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm text-center shadow-lg shadow-indigo-600/25 transition min-h-[52px] flex items-center justify-center gap-2"
+            >
+              <span>⬇️ Baixar PDF</span>
+            </a>
+            <a
+              id="btnOpenDocs"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="py-4 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold text-sm text-center transition min-h-[52px] flex items-center justify-center gap-2"
+            >
+              <span>📄 Abrir no Google Docs</span>
+            </a>
+            <button
+              id="btnCopyHighlights"
+              type="button"
+              class="py-4 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 font-semibold text-sm transition min-h-[52px] flex items-center justify-center gap-2"
+            >
+              <span>📋 Copiar Destaques da Entrevista</span>
+            </button>
+            <button
+              id="btnGoToBacklog"
+              type="button"
+              class="py-4 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-semibold text-sm transition min-h-[52px] flex items-center justify-center gap-2"
+            >
+              <span>🗂️ Ir para o Backlog</span>
+            </button>
+          </div>
+
+          <!-- Summary Preview -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+            <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-300">Destaques Aplicados (Entrevista)</h3>
+              <ul id="doneHighlightsList" class="text-xs text-slate-300 space-y-1 list-disc list-inside"></ul>
+            </div>
+            <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-amber-300">Resumo de Lacunas &amp; Etapa 3</h3>
+              <p id="doneGapsText" class="text-xs text-slate-300 whitespace-pre-line"></p>
+            </div>
+          </div>
+
+          <div class="pt-1">
+            <button
+              id="btnNewApplication"
+              type="button"
+              class="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition min-h-[44px]"
+            >
+              + Analisar Nova Vaga
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- ABA 2: BACKLOG DE CANDIDATURAS                            -->
+    <!-- ========================================================= -->
+    <section id="tab-backlog" class="hidden space-y-4">
+      <div class="flex flex-col sm:flex-row gap-2.5">
+        <input
+          id="backlogSearchInput"
+          type="search"
+          placeholder="Buscar por empresa, cargo ou keyword..."
+          class="flex-1 px-3.5 py-3 rounded-xl bg-slate-900 border border-slate-800 focus:border-indigo-500 text-sm text-white placeholder-slate-500 outline-none min-h-[46px]"
+        />
+        <button
+          id="btnRefreshBacklog"
+          type="button"
+          class="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-200 transition min-h-[46px]"
+        >
+          🔄 Atualizar
+        </button>
+      </div>
+
+      <!-- Status Filter Pills -->
+      <div id="backlogStatusPills" class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
+
+      <!-- Backlog Cards List -->
+      <div id="backlogListContainer" class="space-y-3"></div>
+    </section>
+
+    <!-- ========================================================= -->
+    <!-- ABA 3: MÉTRICAS & SLIs (SRE OBSERVABILITY)                -->
+    <!-- ========================================================= -->
+    <section id="tab-metrics" class="hidden space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-base sm:text-lg font-bold text-white">Painel SRE — SLIs &amp; Telemetria</h2>
+          <p class="text-xs text-slate-400">Consome o contrato de <code class="font-mono">getTelemetryMetrics()</code>.</p>
+        </div>
+        <button
+          id="btnRefreshMetrics"
+          type="button"
+          class="px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-200 transition min-h-[42px]"
+        >
+          🔄 Atualizar
+        </button>
+      </div>
+
+      <!-- Pending Observability Implementation Banner -->
+      <div
+        id="metricsPendingBanner"
+        class="hidden p-4 rounded-2xl bg-amber-950/40 border border-amber-700/60 text-amber-200 text-xs sm:text-sm flex items-start gap-3"
+      >
+        <span class="text-lg leading-none">🛠️</span>
+        <div>
+          <p class="font-bold text-amber-300">Camada de observabilidade pendente de implementação</p>
+          <p class="text-xs text-amber-200/80 mt-0.5">
+            O backend retornou <code class="font-mono">implemented: false</code> (stub no-op em <code class="font-mono">ObservabilityService.gs</code>). Os cartões abaixo exibem o contrato zerado pronto para consumo.
+          </p>
+        </div>
+      </div>
+
+      <!-- Top KPI Cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+          <span class="text-xs text-slate-400">Total Execuções</span>
+          <p id="metricTotalRuns" class="text-2xl font-bold text-white mt-1">0</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+          <span class="text-xs text-slate-400">Taxa de Sucesso</span>
+          <p id="metricSuccessRate" class="text-2xl font-bold text-emerald-400 mt-1">0%</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+          <span class="text-xs text-slate-400">Taxa de Fallback</span>
+          <p id="metricFallbackRate" class="text-2xl font-bold text-amber-400 mt-1">0%</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
+          <span class="text-xs text-slate-400">Latência P95</span>
+          <p id="metricP95Ms" class="text-2xl font-bold text-indigo-400 mt-1">0 ms</p>
+        </div>
+      </div>
+
+      <!-- Latency Breakdown & Input Modes -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Latência Média por Span (ms)</h3>
+          <div id="metricLatencyBreakdown" class="space-y-2 text-xs"></div>
+        </div>
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Execuções por Modo de Entrada</h3>
+          <div id="metricInputModes" class="grid grid-cols-2 gap-2 text-xs"></div>
+        </div>
+      </div>
+
+      <!-- Tokens by Model -->
+      <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Consumo de Tokens por Modelo</h3>
+        <div id="metricTokensByModel" class="text-xs text-slate-400"></div>
+      </div>
+
+      <!-- Recent Traces -->
+      <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Traces Recentes</h3>
+        <div id="metricRecentTraces" class="overflow-x-auto text-xs text-slate-400"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================================================= -->
+  <!-- MODAL 1: PREPARAÇÃO PARA ENTREVISTA (BACKLOG)             -->
+  <!-- ========================================================= -->
+  <div id="interviewModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="max-w-2xl mx-auto my-6 bg-slate-900 border border-slate-700 rounded-2xl p-5 space-y-4 shadow-2xl">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
+        <div>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-indigo-400">Preparação para Entrevista</span>
+          <h3 id="modalInterviewTitle" class="text-base sm:text-lg font-bold text-white"></h3>
+          <p id="modalInterviewSub" class="text-xs text-slate-400"></p>
+        </div>
+        <button id="btnCloseInterviewModal" type="button" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold min-h-[36px] min-w-[36px]">✕</button>
+      </div>
+
+      <div class="space-y-1.5">
+        <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300">Keywords da Vaga</h4>
+        <div id="modalInterviewKeywords" class="flex flex-wrap gap-1.5"></div>
+      </div>
+
+      <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+        <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-300">Destaques Priorizados no CV</h4>
+        <p id="modalInterviewHighlights" class="text-xs text-slate-200 whitespace-pre-line leading-relaxed"></p>
+      </div>
+
+      <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+        <h4 class="text-xs font-bold uppercase tracking-wider text-amber-300">Lacunas &amp; Decisões da Etapa 3</h4>
+        <p id="modalInterviewGaps" class="text-xs text-slate-200 whitespace-pre-line leading-relaxed"></p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="modalInterviewNotes" class="block text-xs font-bold uppercase tracking-wider text-slate-300">
+          Notas Pessoais de Entrevista
+        </label>
+        <textarea
+          id="modalInterviewNotes"
+          rows="4"
+          placeholder="Perguntas para fazer ao recrutador, pontos de atenção, feedback das etapas..."
+          class="w-full p-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 text-sm text-white outline-none"
+        ></textarea>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-1">
+        <button id="btnCancelInterviewModal" type="button" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 min-h-[42px]">
+          Fechar
+        </button>
+        <button id="btnSaveInterviewNotes" type="button" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white min-h-[42px]">
+          Salvar Notas
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================= -->
+  <!-- MODAL 2: CONFIGURAR BOOKMARKLET (PC)                      -->
+  <!-- ========================================================= -->
+  <div id="bookmarkletModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="max-w-xl mx-auto my-8 bg-slate-900 border border-slate-700 rounded-2xl p-5 space-y-4 shadow-2xl">
+      <div class="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
+        <div>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-indigo-400">Captura Anti-Bot em 1 Clique</span>
+          <h3 class="text-base sm:text-lg font-bold text-white">Configurar Bookmarklet (PC)</h3>
+        </div>
+        <button id="btnCloseBookmarkletModal" type="button" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold min-h-[36px] min-w-[36px]">✕</button>
+      </div>
+
+      <ol class="text-xs text-slate-300 space-y-2 list-decimal list-inside leading-relaxed">
+        <li>Exiba a barra de favoritos do navegador (<kbd class="px-1.5 py-0.5 rounded bg-slate-800">Ctrl+Shift+B</kbd>).</li>
+        <li>Arraste o botão abaixo para a barra de favoritos <strong>ou</strong> clique em <em>Copiar Código</em> e crie um favorito manualmente colando o código no campo URL.</li>
+        <li>Com a vaga aberta (LinkedIn, Indeed, Glassdoor, Catho), clique no favorito para copiar o payload <code class="font-mono text-indigo-300">TAILOROPS_CAPTURE::</code> e depois clique em <strong>Colar Captura</strong> aqui no TailorOps.</li>
+      </ol>
+
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 p-4 rounded-xl bg-slate-950 border border-slate-800">
+        <a
+          id="bookmarkletDragLink"
+          href="#"
+          class="flex-1 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs text-center shadow-lg cursor-grab active:cursor-grabbing"
+        >
+          ⚡ Capturar Vaga → TailorOps
+        </a>
+        <button
+          id="btnCopyBookmarkletCode"
+          type="button"
+          class="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold min-h-[42px]"
+        >
+          📋 Copiar Código
+        </button>
+      </div>
+
+      <textarea
+        id="bookmarkletCodePreview"
+        readonly
+        rows="3"
+        class="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-400 outline-none"
+      ></textarea>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="fixed bottom-4 right-4 left-4 sm:left-auto sm:w-96 z-50 space-y-2 pointer-events-none"></div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const BOOKMARKLET_PREFIX = 'TAILOROPS_CAPTURE::';
+      const DEFAULT_STATUSES = [
+        'Gerado',
+        'Aplicado',
+        'Em Andamento',
+        'Proposta',
+        'Rejeitado',
+        'Desisti',
+        'Empresa não retornou',
+      ];
+      const MAX_IMAGES = 4;
+      const MAX_CANVAS_WIDTH = 1400;
+      const JPEG_QUALITY = 0.82;
+
+      const state = {
+        activeTab: 'wizard',
+        statuses: DEFAULT_STATUSES.slice(),
+        compressedImages: [],
+        rawCapture: '',
+        lastAnalysisContext: null,
+        lastGeneratedResult: null,
+        backlogItems: [],
+        backlogFilterStatus: 'ALL',
+        backlogSearch: '',
+        activeInterviewAppId: null,
+      };
+
+      const hasGasRuntime = typeof google !== 'undefined' && google.script && google.script.run;
+
+      // Build bookmarklet script string
+      const BOOKMARKLET_HREF =
+        'javascript:(function(){try{var s=window.getSelection?window.getSelection().toString().trim():"";' +
+        'var b=document.body?(document.body.innerText||""):"";' +
+        'var t=(s.length>=200?s:b).replace(/\\s+\\n/g,"\\n").trim().slice(0,25000);' +
+        'var p="TAILOROPS_CAPTURE::"+JSON.stringify({url:location.href,title:document.title||"",text:t,capturedAt:new Date().toISOString()});' +
+        'function ok(){var d=document.createElement("div");d.textContent="✓ Vaga capturada para o TailorOps!";' +
+        'd.style.cssText="position:fixed;bottom:20px;right:20px;z-index:2147483647;background:#4f46e5;color:#fff;padding:12px 18px;border-radius:10px;font:600 13px sans-serif;box-shadow:0 10px 25px rgba(0,0,0,.35)";' +
+        'document.body.appendChild(d);setTimeout(function(){d.remove();},2800);}' +
+        'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(p).then(ok).catch(fb);}else{fb();}' +
+        'function fb(){var a=document.createElement("textarea");a.value=p;a.style.position="fixed";a.style.opacity="0";document.body.appendChild(a);a.select();document.execCommand("copy");a.remove();ok();}' +
+        '}catch(e){alert("Erro ao capturar vaga: "+e.message);}})();';
+
+      function $(id) {
+        return document.getElementById(id);
+      }
+
+      function escapeHtml(value) {
+        const str = value === null || value === undefined ? '' : String(value);
+        return str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function showToast(message, type) {
+        const container = $('toastContainer');
+        const el = document.createElement('div');
+        const palette =
+          type === 'error'
+            ? 'bg-rose-950/95 border-rose-700 text-rose-100'
+            : type === 'warn'
+              ? 'bg-amber-950/95 border-amber-700 text-amber-100'
+              : 'bg-slate-900/95 border-indigo-500/60 text-slate-100';
+        el.className = 'pointer-events-auto p-3.5 rounded-xl border shadow-xl text-xs font-medium transition ' + palette;
+        el.textContent = message;
+        container.appendChild(el);
+        setTimeout(function () {
+          el.remove();
+        }, 3800);
+      }
+
+      function copyTextSafe(text, successMsg) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(
+            function () {
+              showToast(successMsg || 'Copiado para a área de transferência!');
+            },
+            function () {
+              fallbackCopyText(text, successMsg);
+            }
+          );
+          return;
+        }
+        fallbackCopyText(text, successMsg);
+      }
+
+      function fallbackCopyText(text, successMsg) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+          document.execCommand('copy');
+          showToast(successMsg || 'Copiado para a área de transferência!');
+        } catch {
+          showToast('Não foi possível copiar automaticamente.', 'error');
+        }
+        ta.remove();
+      }
+
+      function callRpc(methodName) {
+        const args = Array.prototype.slice.call(arguments, 1);
+        return new Promise(function (resolve, reject) {
+          if (!hasGasRuntime) {
+            reject(new Error('Ambiente Google Apps Script indisponível nesta pré-visualização local.'));
+            return;
+          }
+          const runner = google.script.run
+            .withSuccessHandler(function (res) {
+              resolve(res);
+            })
+            .withFailureHandler(function (err) {
+              reject(err || new Error('Falha na comunicação com o Apps Script.'));
+            });
+          runner[methodName].apply(runner, args);
+        });
+      }
+
+      function getSelectedModelTier() {
+        const checked = document.querySelector('input[name="modelTier"]:checked');
+        return checked && checked.value === 'FAST' ? 'FAST' : 'HIGH';
+      }
+
+      function setBanner(elId, message, variant) {
+        const el = $(elId);
+        if (!message) {
+          el.className = 'hidden';
+          el.textContent = '';
+          return;
+        }
+        const style =
+          variant === 'warn'
+            ? 'bg-amber-950/50 border-amber-700/70 text-amber-200'
+            : 'bg-rose-950/50 border-rose-700/70 text-rose-200';
+        el.className = 'p-3.5 rounded-xl border text-xs leading-relaxed ' + style;
+        el.textContent = message;
+      }
+
+      // -------------------------
+      // Tab Navigation
+      // -------------------------
+      function switchTab(tabName) {
+        state.activeTab = tabName;
+        ['wizard', 'backlog', 'metrics'].forEach(function (name) {
+          const section = $('tab-' + name);
+          if (name === tabName) {
+            section.classList.remove('hidden');
+          } else {
+            section.classList.add('hidden');
+          }
+        });
+
+        document.querySelectorAll('.nav-tab').forEach(function (btn) {
+          const isCurrent = btn.getAttribute('data-tab') === tabName;
+          btn.className =
+            'nav-tab flex-1 py-3 text-xs sm:text-sm font-semibold border-b-2 transition min-h-[44px] flex items-center justify-center gap-1.5 ' +
+            (isCurrent
+              ? 'border-indigo-500 text-indigo-400'
+              : 'border-transparent text-slate-400 hover:text-slate-200');
+        });
+
+        if (tabName === 'backlog') {
+          loadBacklog();
+        } else if (tabName === 'metrics') {
+          loadMetrics();
+        }
+      }
+
+      function setWizardStep(stepNumber) {
+        [1, 2, 3].forEach(function (n) {
+          const panel = $('wizardStep' + n);
+          const badge = $('stepBadge' + n);
+          if (n === stepNumber) {
+            panel.classList.remove('hidden');
+            badge.className = 'py-2 px-2 rounded-lg bg-indigo-600/20 border border-indigo-500/60 text-indigo-300';
+          } else {
+            panel.classList.add('hidden');
+            badge.className =
+              n < stepNumber
+                ? 'py-2 px-2 rounded-lg bg-emerald-950/40 border border-emerald-700/50 text-emerald-300'
+                : 'py-2 px-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-500';
+          }
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      // -------------------------
+      // Bookmarklet Client Parser
+      // -------------------------
+      function tryConsumeBookmarkletString(raw) {
+        if (typeof raw !== 'string' || !raw.trim().startsWith(BOOKMARKLET_PREFIX)) {
+          return false;
+        }
+        try {
+          const jsonPart = raw.trim().slice(BOOKMARKLET_PREFIX.length);
+          const parsed = JSON.parse(jsonPart);
+          if (!parsed || typeof parsed !== 'object') {
+            return false;
+          }
+          if (parsed.url) {
+            $('inputJobUrl').value = parsed.url;
+          }
+          const extractedText = (parsed.text || parsed.content || '').trim();
+          $('inputManualText').value = extractedText;
+          $('manualCharCount').textContent = extractedText.length + ' chars';
+          state.rawCapture = raw.trim();
+          setBanner('step1Alert', '', '');
+          showToast('Captura do Bookmarklet aplicada com sucesso!');
+          return true;
+        } catch {
+          showToast('Payload TAILOROPS_CAPTURE:: malformado.', 'error');
+          return false;
+        }
+      }
+
+      async function handlePasteBookmarkletClick() {
+        if (!navigator.clipboard || !navigator.clipboard.readText) {
+          $('inputManualText').focus();
+          setBanner(
+            'step1Alert',
+            'Seu navegador bloqueou leitura direta da área de transferência neste iframe. Pressione Ctrl+V diretamente no campo de texto abaixo — o payload TAILOROPS_CAPTURE:: será reconhecido automaticamente.',
+            'warn'
+          );
+          return;
+        }
+        try {
+          const clipText = await navigator.clipboard.readText();
+          if (!tryConsumeBookmarkletString(clipText)) {
+            if (clipText && clipText.trim()) {
+              $('inputManualText').value = clipText.trim();
+              $('manualCharCount').textContent = clipText.trim().length + ' chars';
+              showToast('Texto da área de transferência colado na descrição.');
+            } else {
+              showToast('Área de transferência vazia.', 'warn');
+            }
+          }
+        } catch {
+          $('inputManualText').focus();
+          setBanner(
+            'step1Alert',
+            'Permissão de leitura direta bloqueada pelo iframe do Google Apps Script: pressione Ctrl+V no campo "Descrição da Vaga" abaixo para importar a captura automaticamente.',
+            'warn'
+          );
+        }
+      }
+
+      // -------------------------
+      // Image Compression (<canvas> max 1400px JPEG 0.82)
+      // -------------------------
+      function compressImageFile(file) {
+        return new Promise(function (resolve, reject) {
+          const reader = new FileReader();
+          reader.onerror = function () {
+            reject(new Error('Falha ao ler imagem ' + file.name));
+          };
+          reader.onload = function (ev) {
+            const img = new Image();
+            img.onerror = function () {
+              reject(new Error('Imagem inválida: ' + file.name));
+            };
+            img.onload = function () {
+              let width = img.width;
+              let height = img.height;
+              if (width > MAX_CANVAS_WIDTH) {
+                height = Math.round((height * MAX_CANVAS_WIDTH) / width);
+                width = MAX_CANVAS_WIDTH;
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, width, height);
+              ctx.drawImage(img, 0, 0, width, height);
+
+              const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+              const base64 = dataUrl.split(',')[1] || '';
+              resolve({
+                name: file.name,
+                mimeType: 'image/jpeg',
+                data: base64,
+                previewUrl: dataUrl,
+                kb: Math.max(1, Math.round((base64.length * 3) / 4 / 1024)),
+              });
+            };
+            img.src = ev.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function renderScreenshotPreviews() {
+        const grid = $('screenshotPreviewGrid');
+        $('screenshotCountLabel').textContent = state.compressedImages.length + ' / ' + MAX_IMAGES + ' anexados';
+        grid.innerHTML = '';
+
+        state.compressedImages.forEach(function (item, idx) {
+          const card = document.createElement('div');
+          card.className = 'relative rounded-xl overflow-hidden border border-slate-700 bg-slate-950 group';
+          card.innerHTML =
+            '<img src="' + item.previewUrl + '" alt="Print ' + (idx + 1) + '" class="w-full h-24 object-cover" />' +
+            '<div class="px-2 py-1 text-[11px] text-slate-300 flex items-center justify-between bg-slate-900/95">' +
+            '<span class="truncate">' + escapeHtml(item.name) + '</span>' +
+            '<span class="text-slate-400 shrink-0 ml-1">' + item.kb + ' KB</span>' +
+            '</div>' +
+            '<button type="button" data-remove-idx="' + idx + '" class="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/75 hover:bg-rose-600 text-white text-xs font-bold flex items-center justify-center">✕</button>';
+          grid.appendChild(card);
+        });
+
+        grid.querySelectorAll('[data-remove-idx]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const removeIdx = Number(btn.getAttribute('data-remove-idx'));
+            state.compressedImages.splice(removeIdx, 1);
+            renderScreenshotPreviews();
+          });
+        });
+      }
+
+      async function handleScreenshotsSelected(event) {
+        const files = Array.prototype.slice.call(event.target.files || []);
+        event.target.value = '';
+        if (!files.length) {
+          return;
+        }
+        const availableSlots = MAX_IMAGES - state.compressedImages.length;
+        if (availableSlots <= 0) {
+          showToast('Limite máximo de 4 prints atingido.', 'warn');
+          return;
+        }
+        const toProcess = files.slice(0, availableSlots);
+        if (files.length > availableSlots) {
+          showToast('Apenas os primeiros ' + availableSlots + ' prints foram adicionados (máx. 4).', 'warn');
+        }
+
+        for (let i = 0; i < toProcess.length; i += 1) {
+          try {
+            const compressed = await compressImageFile(toProcess[i]);
+            state.compressedImages.push(compressed);
+          } catch (err) {
+            showToast(err.message || 'Erro ao comprimir imagem.', 'error');
+          }
+        }
+        renderScreenshotPreviews();
+      }
+
+      // -------------------------
+      // Step 1 -> Analyze Job
+      // -------------------------
+      function setAnalyzeLoading(loading) {
+        $('btnAnalyzeJob').disabled = loading;
+        $('btnAnalyzeSpinner').classList.toggle('hidden', !loading);
+        $('btnAnalyzeLabel').textContent = loading
+          ? 'Lendo Docs e analisando vaga...'
+          : 'Analisar Vaga (Etapas 1 a 3)';
+      }
+
+      async function handleAnalyzeJob() {
+        setBanner('step1Alert', '', '');
+        const jobUrl = $('inputJobUrl').value.trim();
+        const manualText = $('inputManualText').value.trim();
+
+        if (!jobUrl && !state.rawCapture) {
+          setBanner('step1Alert', 'Informe o link (URL) da vaga antes de analisar.', 'error');
+          $('inputJobUrl').focus();
+          return;
+        }
+
+        setAnalyzeLoading(true);
+        try {
+          const payload = {
+            jobUrl: jobUrl,
+            modelTier: getSelectedModelTier(),
+            rawCapture: state.rawCapture || '',
+            manualText: manualText,
+            images: state.compressedImages.map(function (img) {
+              return { mimeType: img.mimeType, data: img.data };
+            }),
+          };
+
+          const res = await callRpc('analyzeJob', payload);
+          if (!res || !res.ok) {
+            const code = (res && res.code) || 'ERROR';
+            if (res && res.jobUrl && !$('inputJobUrl').value.trim()) {
+              $('inputJobUrl').value = res.jobUrl;
+            }
+            if (code === 'NEEDS_MANUAL_TEXT') {
+              setBanner(
+                'step1Alert',
+                (res && res.message) ||
+                  'Não foi possível extrair o texto automaticamente pela URL. Cole a descrição completa abaixo ou anexe prints da vaga mantendo a URL preenchida.',
+                'warn'
+              );
+              $('inputManualText').focus();
+              return;
+            }
+            setBanner('step1Alert', '[' + code + '] ' + ((res && res.message) || 'Falha na análise.'), 'error');
+            return;
+          }
+
+          state.lastAnalysisContext = {
+            jobUrl: res.jobUrl,
+            inputMode: res.inputMode,
+            modelTier: payload.modelTier,
+            modelUsed: res.modelUsed,
+            analysis: res.analysis,
+          };
+          renderStep2Pause(state.lastAnalysisContext);
+          setWizardStep(2);
+        } catch (err) {
+          setBanner('step1Alert', err.message || String(err), 'error');
+        } finally {
+          setAnalyzeLoading(false);
+        }
+      }
+
+      // -------------------------
+      // Step 2: Mandatory Pause Rendering
+      // -------------------------
+      function renderGapList(elId, items) {
+        const ul = $(elId);
+        const list = Array.isArray(items) ? items : [];
+        if (list.length === 0) {
+          ul.innerHTML = '<li class="text-slate-500 list-none italic">Nenhum item identificado.</li>';
+          return;
+        }
+        ul.innerHTML = list
+          .map(function (item) {
+            return '<li>' + escapeHtml(item) + '</li>';
+          })
+          .join('');
+      }
+
+      function renderStep2Pause(ctx) {
+        const analysis = ctx.analysis;
+        setBanner('step2Alert', '', '');
+        $('editCompany').value = analysis.company || '';
+        $('editRole').value = analysis.role || '';
+        $('editLanguage').value = analysis.language === 'EN' ? 'EN' : 'PT';
+        $('step2MetaBadge').textContent = (ctx.inputMode || 'input') + ' • ' + (ctx.modelUsed || '');
+
+        $('analysisKeywordsList').innerHTML = (analysis.keywords || [])
+          .map(function (kw) {
+            return (
+              '<span class="px-2.5 py-1 rounded-lg bg-indigo-950/60 border border-indigo-700/50 text-indigo-200 text-xs font-medium">' +
+              escapeHtml(kw) +
+              '</span>'
+            );
+          })
+          .join('');
+
+        const gaps = analysis.gapAnalysis || {};
+        renderGapList('gapPracticalList', gaps.hasPracticalContext);
+        renderGapList('gapUnderList', gaps.underHighlighted);
+        renderGapList('gapRealList', gaps.realGaps);
+
+        const qContainer = $('validationQuestionsContainer');
+        const questions = Array.isArray(analysis.validationQuestions) ? analysis.validationQuestions : [];
+        if (questions.length === 0) {
+          qContainer.innerHTML =
+            '<div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400">' +
+            'Nenhuma pergunta pendente — todas as competências relevantes já estão claras na Master Database.' +
+            '</div>';
+          return;
+        }
+
+        qContainer.innerHTML = questions
+          .map(function (q, idx) {
+            const includeDefault = Boolean(q.suggestedDefault);
+            return (
+              '<div class="validation-card p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5" data-q-id="' +
+              escapeHtml(q.id || 'q' + idx) +
+              '" data-q-tech="' +
+              escapeHtml(q.technology || '') +
+              '">' +
+              '<div class="flex flex-wrap items-center justify-between gap-2">' +
+              '<span class="px-2.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 text-xs font-bold">' +
+              escapeHtml(q.technology) +
+              '</span>' +
+              '<div class="inline-flex rounded-lg bg-slate-900 p-0.5 border border-slate-800">' +
+              '<button type="button" data-toggle="include" class="q-toggle px-3 py-1.5 rounded-md text-xs font-semibold transition ' +
+              (includeDefault ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200') +
+              '">Incluir</button>' +
+              '<button type="button" data-toggle="exclude" class="q-toggle px-3 py-1.5 rounded-md text-xs font-semibold transition ' +
+              (!includeDefault ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-slate-200') +
+              '">Não incluir</button>' +
+              '</div>' +
+              '</div>' +
+              '<p class="text-xs text-slate-400">' + escapeHtml(q.reason) + '</p>' +
+              '<p class="text-sm font-medium text-slate-100">' + escapeHtml(q.question) + '</p>' +
+              '<input type="text" data-q-context placeholder="Contexto prático curto opcional (ex.: utilizado em API interna na dti)..." ' +
+              'class="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 focus:border-indigo-500 text-xs text-white placeholder-slate-500 outline-none" ' +
+              'data-include-state="' + (includeDefault ? 'true' : 'false') + '" />' +
+              '</div>'
+            );
+          })
+          .join('');
+
+        qContainer.querySelectorAll('.validation-card').forEach(function (card) {
+          const btnInc = card.querySelector('[data-toggle="include"]');
+          const btnExc = card.querySelector('[data-toggle="exclude"]');
+          const ctxInput = card.querySelector('[data-q-context]');
+
+          btnInc.addEventListener('click', function () {
+            ctxInput.setAttribute('data-include-state', 'true');
+            btnInc.className = 'q-toggle px-3 py-1.5 rounded-md text-xs font-semibold transition bg-emerald-600 text-white';
+            btnExc.className = 'q-toggle px-3 py-1.5 rounded-md text-xs font-semibold transition text-slate-400 hover:text-slate-200';
+          });
+
+          btnExc.addEventListener('click', function () {
+            ctxInput.setAttribute('data-include-state', 'false');
+            btnExc.className = 'q-toggle px-3 py-1.5 rounded-md text-xs font-semibold transition bg-rose-600 text-white';
+            btnInc.className = 'q-toggle px-3 py-1.5 rounded-md text-xs font-semibold transition text-slate-400 hover:text-slate-200';
+          });
+        });
+      }
+
+      // -------------------------
+      // Step 2 -> Generate Resume
+      // -------------------------
+      function setGenerateLoading(loading) {
+        $('btnGenerateResume').disabled = loading;
+        $('btnBackToStep1').disabled = loading;
+        $('btnGenerateSpinner').classList.toggle('hidden', !loading);
+        $('btnGenerateLabel').textContent = loading
+          ? 'Gerando currículo no Docs e salvando no Backlog...'
+          : 'Gerar Currículo ATS';
+      }
+
+      async function handleGenerateResume() {
+        if (!state.lastAnalysisContext) {
+          return;
+        }
+        setBanner('step2Alert', '', '');
+        const company = $('editCompany').value.trim();
+        const role = $('editRole').value.trim();
+        const language = $('editLanguage').value === 'EN' ? 'EN' : 'PT';
+
+        if (!company || !role) {
+          setBanner('step2Alert', 'Preencha Empresa e Cargo antes de gerar o currículo.', 'error');
+          return;
+        }
+
+        const validationAnswers = [];
+        document.querySelectorAll('#validationQuestionsContainer .validation-card').forEach(function (card) {
+          const ctxInput = card.querySelector('[data-q-context]');
+          validationAnswers.push({
+            id: card.getAttribute('data-q-id') || '',
+            technology: card.getAttribute('data-q-tech') || '',
+            include: ctxInput.getAttribute('data-include-state') === 'true',
+            context: (ctxInput.value || '').trim(),
+          });
+        });
+
+        setGenerateLoading(true);
+        try {
+          const ctx = state.lastAnalysisContext;
+          const payload = {
+            jobUrl: ctx.jobUrl,
+            inputMode: ctx.inputMode,
+            modelTier: getSelectedModelTier(),
+            company: company,
+            role: role,
+            language: language,
+            keywords: ctx.analysis.keywords || [],
+            extractedJobSummary: ctx.analysis.extractedJobSummary || '',
+            gapAnalysis: ctx.analysis.gapAnalysis || {},
+            validationAnswers: validationAnswers,
+            extraInstructions: $('inputExtraInstructions').value.trim(),
+          };
+
+          const res = await callRpc('generateResume', payload);
+          if (!res || !res.ok) {
+            setBanner(
+              'step2Alert',
+              '[' + ((res && res.code) || 'ERROR') + '] ' + ((res && res.message) || 'Falha ao gerar currículo.'),
+              'error'
+            );
+            return;
+          }
+
+          state.lastGeneratedResult = res;
+          renderStep3Done(res);
+          setWizardStep(3);
+          showToast('Currículo ATS criado no Google Drive!');
+        } catch (err) {
+          setBanner('step2Alert', err.message || String(err), 'error');
+        } finally {
+          setGenerateLoading(false);
+        }
+      }
+
+      function renderStep3Done(res) {
+        $('doneFilename').textContent = res.filename || 'Currículo gerado';
+        const app = res.application || {};
+        $('doneMeta').textContent =
+          (app.id ? app.id + ' • ' : '') +
+          'Status: ' + (app.status || 'Gerado') +
+          (res.modelUsed ? ' • Modelo: ' + res.modelUsed : '');
+
+        $('btnDownloadPdf').href = res.pdfUrl || '#';
+        $('btnOpenDocs').href = res.docUrl || '#';
+
+        const warnings = Array.isArray(res.warnings) ? res.warnings : [];
+        const warnBox = $('doneWarnings');
+        if (warnings.length > 0) {
+          warnBox.classList.remove('hidden');
+          warnBox.innerHTML = warnings
+            .map(function (w) {
+              return '<p>⚠️ ' + escapeHtml(w) + '</p>';
+            })
+            .join('');
+        } else {
+          warnBox.classList.add('hidden');
+          warnBox.innerHTML = '';
+        }
+
+        const highlights = Array.isArray(res.highlightsSummary)
+          ? res.highlightsSummary
+          : String(res.highlightsSummary || '')
+              .split('\n')
+              .filter(Boolean);
+        $('doneHighlightsList').innerHTML = highlights
+          .map(function (h) {
+            return '<li>' + escapeHtml(h) + '</li>';
+          })
+          .join('');
+        $('doneGapsText').textContent = res.gapsSummary || 'Nenhuma lacuna registrada.';
+      }
+
+      function resetWizard() {
+        state.compressedImages = [];
+        state.rawCapture = '';
+        state.lastAnalysisContext = null;
+        state.lastGeneratedResult = null;
+        $('inputJobUrl').value = '';
+        $('inputManualText').value = '';
+        $('inputExtraInstructions').value = '';
+        $('manualCharCount').textContent = '0 chars';
+        setBanner('step1Alert', '', '');
+        setBanner('step2Alert', '', '');
+        renderScreenshotPreviews();
+        setWizardStep(1);
+      }
+
+      // -------------------------
+      // Tab 2: Backlog Management
+      // -------------------------
+      function statusBadgeClass(status) {
+        switch (status) {
+          case 'Gerado':
+            return 'bg-slate-800 text-slate-200 border-slate-700';
+          case 'Aplicado':
+            return 'bg-indigo-950/70 text-indigo-300 border-indigo-700/60';
+          case 'Em Andamento':
+            return 'bg-sky-950/70 text-sky-300 border-sky-700/60';
+          case 'Proposta':
+            return 'bg-emerald-950/70 text-emerald-300 border-emerald-700/60';
+          case 'Rejeitado':
+            return 'bg-rose-950/70 text-rose-300 border-rose-700/60';
+          case 'Desisti':
+            return 'bg-amber-950/70 text-amber-300 border-amber-700/60';
+          case 'Empresa não retornou':
+            return 'bg-purple-950/70 text-purple-300 border-purple-700/60';
+          default:
+            return 'bg-slate-800 text-slate-300 border-slate-700';
+        }
+      }
+
+      async function loadBacklog() {
+        const container = $('backlogListContainer');
+        if (!state.backlogItems.length) {
+          container.innerHTML = '<div class="p-8 text-center text-xs text-slate-400">Carregando backlog...</div>';
+        }
+        try {
+          const res = await callRpc('getBacklog');
+          if (!res || !res.ok) {
+            container.innerHTML =
+              '<div class="p-4 rounded-xl bg-rose-950/40 border border-rose-800 text-xs text-rose-200">' +
+              escapeHtml((res && res.message) || 'Erro ao carregar backlog.') +
+              '</div>';
+            return;
+          }
+          if (Array.isArray(res.statuses) && res.statuses.length) {
+            state.statuses = res.statuses;
+          }
+          state.backlogItems = Array.isArray(res.items) ? res.items : [];
+          $('backlogTabCount').textContent = String(state.backlogItems.length);
+          renderBacklogPills();
+          renderBacklogList();
+        } catch (err) {
+          container.innerHTML =
+            '<div class="p-4 rounded-xl bg-rose-950/40 border border-rose-800 text-xs text-rose-200">' +
+            escapeHtml(err.message || String(err)) +
+            '</div>';
+        }
+      }
+
+      function renderBacklogPills() {
+        const counts = { ALL: state.backlogItems.length };
+        state.statuses.forEach(function (st) {
+          counts[st] = 0;
+        });
+        state.backlogItems.forEach(function (item) {
+          counts[item.status] = (counts[item.status] || 0) + 1;
+        });
+
+        const pills = [{ key: 'ALL', label: 'Todos' }].concat(
+          state.statuses.map(function (st) {
+            return { key: st, label: st };
+          })
+        );
+
+        const container = $('backlogStatusPills');
+        container.innerHTML = pills
+          .map(function (pill) {
+            const active = state.backlogFilterStatus === pill.key;
+            return (
+              '<button type="button" data-status-pill="' +
+              escapeHtml(pill.key) +
+              '" class="shrink-0 px-3 py-2 rounded-xl text-xs font-semibold border transition min-h-[38px] ' +
+              (active
+                ? 'bg-indigo-600 border-indigo-500 text-white'
+                : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800') +
+              '">' +
+              escapeHtml(pill.label) +
+              ' <span class="opacity-75">(' +
+              (counts[pill.key] || 0) +
+              ')</span></button>'
+            );
+          })
+          .join('');
+
+        container.querySelectorAll('[data-status-pill]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            state.backlogFilterStatus = btn.getAttribute('data-status-pill');
+            renderBacklogPills();
+            renderBacklogList();
+          });
+        });
+      }
+
+      function getFilteredBacklog() {
+        const q = state.backlogSearch.trim().toLowerCase();
+        return state.backlogItems.filter(function (item) {
+          if (state.backlogFilterStatus !== 'ALL' && item.status !== state.backlogFilterStatus) {
+            return false;
+          }
+          if (!q) {
+            return true;
+          }
+          const inCompany = (item.company || '').toLowerCase().indexOf(q) >= 0;
+          const inRole = (item.role || '').toLowerCase().indexOf(q) >= 0;
+          const inKeywords = (item.keywords || []).some(function (k) {
+            return String(k).toLowerCase().indexOf(q) >= 0;
+          });
+          return inCompany || inRole || inKeywords;
+        });
+      }
+
+      function renderBacklogList() {
+        const container = $('backlogListContainer');
+        const filtered = getFilteredBacklog();
+
+        if (filtered.length === 0) {
+          container.innerHTML =
+            '<div class="p-8 rounded-2xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">' +
+            'Nenhuma candidatura encontrada para os filtros selecionados.' +
+            '</div>';
+          return;
+        }
+
+        container.innerHTML = filtered
+          .map(function (item) {
+            const statusOptions = state.statuses
+              .map(function (st) {
+                return (
+                  '<option value="' +
+                  escapeHtml(st) +
+                  '" ' +
+                  (st === item.status ? 'selected' : '') +
+                  '>' +
+                  escapeHtml(st) +
+                  '</option>'
+                );
+              })
+              .join('');
+
+            const dateStr = item.createdAt ? item.createdAt.slice(0, 10) : '';
+            return (
+              '<article class="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">' +
+              '<div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">' +
+              '<div class="min-w-0">' +
+              '<div class="flex items-center gap-2 flex-wrap">' +
+              '<h3 class="text-sm sm:text-base font-bold text-white truncate">' +
+              escapeHtml(item.role) +
+              '</h3>' +
+              '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300">' +
+              escapeHtml(item.language || 'PT') +
+              '</span>' +
+              '</div>' +
+              '<p class="text-xs text-slate-300 font-medium mt-0.5">' +
+              escapeHtml(item.company) +
+              (dateStr ? ' <span class="text-slate-500">• ' + escapeHtml(dateStr) + '</span>' : '') +
+              '</p>' +
+              '</div>' +
+              '<select data-status-select="' +
+              escapeHtml(item.id) +
+              '" class="px-3 py-2 rounded-xl border text-xs font-semibold outline-none min-h-[40px] ' +
+              statusBadgeClass(item.status) +
+              '">' +
+              statusOptions +
+              '</select>' +
+              '</div>' +
+              '<div class="flex flex-wrap gap-1.5">' +
+              (item.keywords || [])
+                .slice(0, 6)
+                .map(function (kw) {
+                  return (
+                    '<span class="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-[11px] text-slate-300">' +
+                    escapeHtml(kw) +
+                    '</span>'
+                  );
+                })
+                .join('') +
+              '</div>' +
+              '<div class="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800/80">' +
+              (item.jobUrl
+                ? '<a href="' + escapeHtml(item.jobUrl) + '" target="_blank" rel="noopener noreferrer" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 min-h-[38px] inline-flex items-center">🔗 Vaga</a>'
+                : '') +
+              (item.docUrl
+                ? '<a href="' + escapeHtml(item.docUrl) + '" target="_blank" rel="noopener noreferrer" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 min-h-[38px] inline-flex items-center">📄 Docs</a>'
+                : '') +
+              (item.pdfUrl
+                ? '<a href="' + escapeHtml(item.pdfUrl) + '" target="_blank" rel="noopener noreferrer" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 min-h-[38px] inline-flex items-center">⬇️ PDF</a>'
+                : '') +
+              '<button type="button" data-open-interview="' +
+              escapeHtml(item.id) +
+              '" class="ml-auto px-3.5 py-2 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-semibold text-indigo-300 min-h-[38px]">🎯 Preparação p/ Entrevista</button>' +
+              '</div>' +
+              '</article>'
+            );
+          })
+          .join('');
+
+        container.querySelectorAll('[data-status-select]').forEach(function (sel) {
+          sel.addEventListener('change', function () {
+            const appId = sel.getAttribute('data-status-select');
+            handleQuickStatusChange(appId, sel.value);
+          });
+        });
+
+        container.querySelectorAll('[data-open-interview]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            openInterviewModal(btn.getAttribute('data-open-interview'));
+          });
+        });
+      }
+
+      async function handleQuickStatusChange(appId, newStatus) {
+        const target = state.backlogItems.find(function (i) {
+          return i.id === appId;
+        });
+        if (!target) {
+          return;
+        }
+        const prevStatus = target.status;
+        target.status = newStatus;
+        renderBacklogPills();
+        renderBacklogList();
+
+        try {
+          const res = await callRpc('updateApplication', { id: appId, status: newStatus });
+          if (!res || !res.ok) {
+            target.status = prevStatus;
+            renderBacklogPills();
+            renderBacklogList();
+            showToast((res && res.message) || 'Erro ao salvar status.', 'error');
+            return;
+          }
+          showToast('Status atualizado para "' + newStatus + '".');
+        } catch (err) {
+          target.status = prevStatus;
+          renderBacklogPills();
+          renderBacklogList();
+          showToast(err.message || 'Erro ao salvar status.', 'error');
+        }
+      }
+
+      // -------------------------
+      // Interview Prep Modal
+      // -------------------------
+      function openInterviewModal(appId) {
+        const item = state.backlogItems.find(function (i) {
+          return i.id === appId;
+        });
+        if (!item) {
+          return;
+        }
+        state.activeInterviewAppId = appId;
+        $('modalInterviewTitle').textContent = item.role + ' — ' + item.company;
+        $('modalInterviewSub').textContent = item.id + ' • Status: ' + item.status + ' • Idioma: ' + (item.language || 'PT');
+        $('modalInterviewKeywords').innerHTML = (item.keywords || [])
+          .map(function (kw) {
+            return (
+              '<span class="px-2.5 py-1 rounded-lg bg-indigo-950/60 border border-indigo-700/50 text-indigo-200 text-xs font-medium">' +
+              escapeHtml(kw) +
+              '</span>'
+            );
+          })
+          .join('');
+        $('modalInterviewHighlights').textContent = item.highlightsSummary || 'Sem destaques registrados.';
+        $('modalInterviewGaps').textContent = item.gapsSummary || 'Sem lacunas registradas.';
+        $('modalInterviewNotes').value = item.notes || '';
+        $('interviewModal').classList.remove('hidden');
+      }
+
+      function closeInterviewModal() {
+        state.activeInterviewAppId = null;
+        $('interviewModal').classList.add('hidden');
+      }
+
+      async function handleSaveInterviewNotes() {
+        if (!state.activeInterviewAppId) {
+          return;
+        }
+        const notes = $('modalInterviewNotes').value;
+        const btn = $('btnSaveInterviewNotes');
+        btn.disabled = true;
+        btn.textContent = 'Salvando...';
+        try {
+          const res = await callRpc('updateApplication', {
+            id: state.activeInterviewAppId,
+            notes: notes,
+          });
+          if (!res || !res.ok) {
+            showToast((res && res.message) || 'Falha ao salvar notas.', 'error');
+            return;
+          }
+          const item = state.backlogItems.find(function (i) {
+            return i.id === state.activeInterviewAppId;
+          });
+          if (item) {
+            item.notes = notes;
+          }
+          showToast('Notas de entrevista salvas!');
+          closeInterviewModal();
+        } catch (err) {
+          showToast(err.message || 'Falha ao salvar notas.', 'error');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Salvar Notas';
+        }
+      }
+
+      // -------------------------
+      // Tab 3: Metrics & SLIs
+      // -------------------------
+      async function loadMetrics() {
+        try {
+          const m = await callRpc('getTelemetryMetrics');
+          renderMetrics(m || {});
+        } catch (err) {
+          showToast(err.message || 'Erro ao carregar métricas.', 'error');
+        }
+      }
+
+      function renderMetrics(m) {
+        const isImplemented = Boolean(m && m.implemented === true);
+        $('metricsPendingBanner').classList.toggle('hidden', isImplemented);
+
+        $('metricTotalRuns').textContent = String((m && m.totalRuns) || 0);
+        $('metricSuccessRate').textContent = Number((m && m.successRate) || 0).toFixed(1).replace(/\.0$/, '') + '%';
+        $('metricFallbackRate').textContent = Number((m && m.fallbackRate) || 0).toFixed(1).replace(/\.0$/, '') + '%';
+        const lat = (m && m.latency) || {};
+        $('metricP95Ms').textContent = ((lat.p95Ms || 0) + ' ms');
+
+        const spans = [
+          { label: 'Média Total (avgMs)', val: lat.avgMs || 0 },
+          { label: 'Extração (avgExtractMs)', val: lat.avgExtractMs || 0 },
+          { label: 'Drive / Docs (avgDriveMs)', val: lat.avgDriveMs || 0 },
+          { label: 'Gemini API (avgGeminiMs)', val: lat.avgGeminiMs || 0 },
+        ];
+        $('metricLatencyBreakdown').innerHTML = spans
+          .map(function (s) {
+            return (
+              '<div class="flex items-center justify-between py-1.5 border-b border-slate-800/70 last:border-0">' +
+              '<span class="text-slate-400">' + escapeHtml(s.label) + '</span>' +
+              '<span class="font-mono font-semibold text-slate-200">' + escapeHtml(s.val) + ' ms</span>' +
+              '</div>'
+            );
+          })
+          .join('');
+
+        const modes = (m && m.byInputMode) || {};
+        const modeEntries = [
+          { key: 'bookmarklet', label: 'Bookmarklet' },
+          { key: 'screenshot', label: 'Prints (Mobile)' },
+          { key: 'manual_text', label: 'Texto Manual' },
+          { key: 'url_fetch', label: 'URL Leve (Jina)' },
+        ];
+        $('metricInputModes').innerHTML = modeEntries
+          .map(function (entry) {
+            return (
+              '<div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">' +
+              '<span class="text-slate-400">' + escapeHtml(entry.label) + '</span>' +
+              '<span class="font-mono font-bold text-white">' + Number(modes[entry.key] || 0) + '</span>' +
+              '</div>'
+            );
+          })
+          .join('');
+
+        const tokensByModel = (m && m.tokensByModel) || {};
+        const modelKeys = Object.keys(tokensByModel);
+        if (modelKeys.length === 0) {
+          $('metricTokensByModel').innerHTML = '<p class="text-slate-500 italic">Nenhum consumo registrado.</p>';
+        } else {
+          $('metricTokensByModel').innerHTML = modelKeys
+            .map(function (mk) {
+              const info = tokensByModel[mk] || {};
+              return (
+                '<div class="flex items-center justify-between py-1.5 border-b border-slate-800 last:border-0">' +
+                '<span class="font-mono text-slate-200">' + escapeHtml(mk) + '</span>' +
+                '<span class="text-slate-300">in: ' + Number(info.tokensIn || 0) + ' • out: ' + Number(info.tokensOut || 0) + '</span>' +
+                '</div>'
+              );
+            })
+            .join('');
+        }
+
+        const traces = Array.isArray(m && m.recentTraces) ? m.recentTraces : [];
+        if (traces.length === 0) {
+          $('metricRecentTraces').innerHTML = '<p class="text-slate-500 italic">Nenhum trace registrado.</p>';
+        } else {
+          $('metricRecentTraces').innerHTML =
+            '<table class="w-full text-left border-collapse">' +
+            '<thead><tr class="text-slate-400 border-b border-slate-800">' +
+            '<th class="py-2 pr-3">Timestamp</th><th class="py-2 pr-3">Trace</th><th class="py-2 pr-3">Op</th><th class="py-2 pr-3">Status</th><th class="py-2">Latência</th>' +
+            '</tr></thead><tbody>' +
+            traces
+              .map(function (t) {
+                return (
+                  '<tr class="border-b border-slate-800/60 text-slate-200">' +
+                  '<td class="py-2 pr-3 font-mono">' + escapeHtml(t.timestamp || '') + '</td>' +
+                  '<td class="py-2 pr-3 font-mono">' + escapeHtml(t.traceId || '') + '</td>' +
+                  '<td class="py-2 pr-3">' + escapeHtml(t.operation || '') + '</td>' +
+                  '<td class="py-2 pr-3">' + escapeHtml(t.status || '') + '</td>' +
+                  '<td class="py-2 font-mono">' + escapeHtml((t.totalMs || 0) + ' ms') + '</td>' +
+                  '</tr>'
+                );
+              })
+              .join('') +
+            '</tbody></table>';
+        }
+      }
+
+      // -------------------------
+      // Boot & Event Wiring
+      // -------------------------
+      async function initApp() {
+        if (!hasGasRuntime) {
+          $('gasEnvWarning').classList.remove('hidden');
+          renderMetrics({ implemented: false });
+        }
+
+        $('bookmarkletDragLink').setAttribute('href', BOOKMARKLET_HREF);
+        $('bookmarkletCodePreview').value = BOOKMARKLET_HREF;
+
+        document.querySelectorAll('.nav-tab').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            switchTab(btn.getAttribute('data-tab'));
+          });
+        });
+
+        $('btnPasteBookmarklet').addEventListener('click', handlePasteBookmarkletClick);
+        $('inputScreenshots').addEventListener('change', handleScreenshotsSelected);
+
+        $('inputManualText').addEventListener('input', function (e) {
+          const val = e.target.value || '';
+          if (tryConsumeBookmarkletString(val)) {
+            return;
+          }
+          $('manualCharCount').textContent = val.length + ' chars';
+        });
+
+        $('inputJobUrl').addEventListener('input', function (e) {
+          tryConsumeBookmarkletString(e.target.value || '');
+        });
+
+        $('btnAnalyzeJob').addEventListener('click', handleAnalyzeJob);
+        $('btnResetWizard').addEventListener('click', resetWizard);
+        $('btnBackToStep1').addEventListener('click', function () {
+          setWizardStep(1);
+        });
+        $('btnGenerateResume').addEventListener('click', handleGenerateResume);
+        $('btnNewApplication').addEventListener('click', resetWizard);
+
+        $('btnCopyHighlights').addEventListener('click', function () {
+          if (!state.lastGeneratedResult) {
+            return;
+          }
+          const res = state.lastGeneratedResult;
+          const app = res.application || {};
+          const lines = [
+            'Vaga: ' + (app.role || '') + ' — ' + (app.company || ''),
+            'Keywords: ' + ((app.keywords || []).join(', ')),
+            '',
+            'Destaques aplicados:',
+            Array.isArray(res.highlightsSummary) ? res.highlightsSummary.join('\n') : (res.highlightsSummary || ''),
+            '',
+            'Lacunas / Etapa 3:',
+            res.gapsSummary || '',
+          ].join('\n');
+          copyTextSafe(lines, 'Destaques copiados para preparação de entrevista!');
+        });
+
+        $('btnGoToBacklog').addEventListener('click', function () {
+          switchTab('backlog');
+        });
+
+        $('backlogSearchInput').addEventListener('input', function (e) {
+          state.backlogSearch = e.target.value || '';
+          renderBacklogList();
+        });
+        $('btnRefreshBacklog').addEventListener('click', loadBacklog);
+        $('btnRefreshMetrics').addEventListener('click', loadMetrics);
+
+        // Interview Modal events
+        $('btnCloseInterviewModal').addEventListener('click', closeInterviewModal);
+        $('btnCancelInterviewModal').addEventListener('click', closeInterviewModal);
+        $('btnSaveInterviewNotes').addEventListener('click', handleSaveInterviewNotes);
+
+        // Bookmarklet Modal events
+        $('btnOpenBookmarkletModal').addEventListener('click', function () {
+          $('bookmarkletModal').classList.remove('hidden');
+        });
+        $('btnCloseBookmarkletModal').addEventListener('click', function () {
+          $('bookmarkletModal').classList.add('hidden');
+        });
+        $('btnCopyBookmarkletCode').addEventListener('click', function () {
+          copyTextSafe(BOOKMARKLET_HREF, 'Código do Bookmarklet copiado!');
+        });
+
+        if (hasGasRuntime) {
+          try {
+            const cfgRes = await callRpc('getConfigInfo');
+            if (cfgRes && cfgRes.ok && cfgRes.config) {
+              if (Array.isArray(cfgRes.config.statuses)) {
+                state.statuses = cfgRes.config.statuses;
+              }
+              if (cfgRes.config.models) {
+                $('modelHighLabel').textContent = cfgRes.config.models.HIGH || 'MODEL_HIGH';
+                $('modelFastLabel').textContent = cfgRes.config.models.FAST || 'MODEL_FAST';
+              }
+            }
+          } catch {
+            // Silent on boot: health check or analyzeJob will surface missing ScriptProperties clearly
+          }
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', initApp);
+    })();
+  </script>
+</body>
+</html>
