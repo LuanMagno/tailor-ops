@@ -10,7 +10,7 @@
     "watch": "clasp push --watch",
     "open": "clasp open",
     "logs": "clasp logs",
-    "deploy:update": "clasp push && clasp deploy"
+    "deploy:update": "clasp push --force && clasp deploy"
   },
   "devDependencies": {
     "@google/clasp": "^3.4.1",
