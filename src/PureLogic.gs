@@ -19,7 +19,45 @@ const APPLICATION_STATUSES = Object.freeze([
 const BOOKMARKLET_PREFIX = 'TAILOROPS_CAPTURE::';
 const MAX_BOOKMARKLET_TEXT_LENGTH = 25000;
 const MAX_FILENAME_SEGMENT_LENGTH = 60;
+const MAX_SCREENSHOT_COUNT = 4;
+const MAX_IMAGE_BASE64_LENGTH = 7000000;
+const MIN_EXTRACTED_TEXT_LENGTH = 300;
+const ALLOWED_IMAGE_MIME_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/webp']);
 const RETRYABLE_HTTP_STATUSES = Object.freeze([429, 500, 502, 503, 504]);
+
+const SECTION_HEADINGS = Object.freeze({
+  PT: Object.freeze({
+    summary: 'RESUMO PROFISSIONAL',
+    experience: 'EXPERIÊNCIA PROFISSIONAL',
+    skills: 'HABILIDADES TÉCNICAS',
+    education: 'FORMAÇÃO ACADÊMICA',
+    courses: 'CURSOS RELEVANTES',
+  }),
+  EN: Object.freeze({
+    summary: 'PROFESSIONAL SUMMARY',
+    experience: 'PROFESSIONAL EXPERIENCE',
+    skills: 'TECHNICAL SKILLS',
+    education: 'EDUCATION',
+    courses: 'RELEVANT COURSEWORK',
+  }),
+});
+
+const BACKLOG_HEADERS = Object.freeze([
+  'id',
+  'created_at',
+  'company',
+  'role',
+  'language',
+  'status',
+  'job_url',
+  'doc_url',
+  'pdf_url',
+  'keywords_json',
+  'highlights_summary',
+  'gaps_summary',
+  'notes',
+  'metadata_json',
+]);
 
 /**
  * Checks whether a value is a non-null plain object (not an array).
@@ -389,6 +427,317 @@ function calculateBackoffDelayMs(attempt, options) {
 }
 
 /**
+ * Normalizes extracted job text (CRLF -> LF, collapses excessive blank lines, trims, caps length).
+ * @param {string} rawText
+ * @param {number} [maxLength]
+ * @returns {string}
+ */
+function cleanExtractedText(rawText, maxLength) {
+  if (typeof rawText !== 'string') {
+    return '';
+  }
+  const limit = typeof maxLength === 'number' && maxLength > 0
+    ? maxLength
+    : MAX_BOOKMARKLET_TEXT_LENGTH;
+  return rawText
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, limit);
+}
+
+/**
+ * Validates up to MAX_SCREENSHOT_COUNT Base64 image attachments for multimodal Gemini calls.
+ * @param {Array<{ mimeType?: string, data: string }>} images
+ * @returns {{
+ *   valid: boolean,
+ *   normalized: Array<{ mimeType: string, data: string }>,
+ *   errors: string[]
+ * }}
+ */
+function validateImageAttachments(images) {
+  const errors = [];
+  const normalized = [];
+
+  if (!Array.isArray(images) || images.length === 0) {
+    return {
+      valid: false,
+      normalized: [],
+      errors: ['Envie entre 1 e 4 imagens para análise multimodal.'],
+    };
+  }
+
+  if (images.length > MAX_SCREENSHOT_COUNT) {
+    return {
+      valid: false,
+      normalized: [],
+      errors: [`Limite máximo de ${MAX_SCREENSHOT_COUNT} imagens excedido.`],
+    };
+  }
+
+  images.forEach((item, index) => {
+    if (!isPlainObject(item) || typeof item.data !== 'string') {
+      errors.push(`Imagem ${index + 1} inválida: campo "data" ausente.`);
+      return;
+    }
+
+    let mimeType = typeof item.mimeType === 'string' ? item.mimeType.trim().toLowerCase() : '';
+    let base64Data = item.data.trim();
+
+    const dataUrlMatch = /^data:([^;]+);base64,(.*)$/i.exec(base64Data);
+    if (dataUrlMatch) {
+      if (!mimeType) {
+        mimeType = dataUrlMatch[1].trim().toLowerCase();
+      }
+      base64Data = dataUrlMatch[2];
+    }
+
+    base64Data = base64Data.replace(/\s+/g, '');
+
+    if (!ALLOWED_IMAGE_MIME_TYPES.includes(mimeType)) {
+      errors.push(`Imagem ${index + 1}: tipo MIME "${mimeType || 'desconhecido'}" não permitido.`);
+      return;
+    }
+
+    if (base64Data.length === 0 || base64Data.length > MAX_IMAGE_BASE64_LENGTH) {
+      errors.push(`Imagem ${index + 1}: tamanho Base64 inválido ou acima do limite.`);
+      return;
+    }
+
+    if (base64Data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64Data)) {
+      errors.push(`Imagem ${index + 1}: conteúdo Base64 malformado.`);
+      return;
+    }
+
+    normalized.push({ mimeType, data: base64Data });
+  });
+
+  return {
+    valid: errors.length === 0,
+    normalized: errors.length === 0 ? normalized : [],
+    errors,
+  };
+}
+
+/**
+ * Returns the canonical section heading in PT or EN.
+ * @param {'summary'|'experience'|'skills'|'education'|'courses'} sectionKey
+ * @param {string} language
+ * @returns {string}
+ */
+function getSectionHeading(sectionKey, language) {
+  const langKey = language === 'EN' ? 'EN' : 'PT';
+  const map = SECTION_HEADINGS[langKey];
+  if (!Object.prototype.hasOwnProperty.call(map, sectionKey)) {
+    throw new Error(`Seção de currículo desconhecida: ${sectionKey}`);
+  }
+  return map[sectionKey];
+}
+
+/**
+ * Normalizes text for accent-insensitive section heading detection.
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeHeadingForMatch(text) {
+  if (typeof text !== 'string') {
+    return '';
+  }
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+/**
+ * Detects whether a paragraph matches one of the 5 ATS resume anchor headings (PT or EN).
+ * @param {string} paragraphText
+ * @returns {'summary'|'experience'|'skills'|'education'|'courses'|null}
+ */
+function detectSectionAnchor(paragraphText) {
+  const normalized = normalizeHeadingForMatch(paragraphText);
+  if (!normalized) {
+    return null;
+  }
+
+  const keys = ['summary', 'experience', 'skills', 'education', 'courses'];
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    if (
+      normalized === normalizeHeadingForMatch(SECTION_HEADINGS.PT[key]) ||
+      normalized === normalizeHeadingForMatch(SECTION_HEADINGS.EN[key])
+    ) {
+      return key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Generates a unique application ID in the format APP-YYYYMMDD-XXXX.
+ * @param {Date} [date]
+ * @param {string} [randomSuffix] Optional 4-char uppercase alphanumeric suffix for deterministic tests.
+ * @returns {string}
+ */
+function generateApplicationId(date, randomSuffix) {
+  const targetDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const year = String(targetDate.getFullYear());
+  const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+  const day = String(targetDate.getDate()).padStart(2, '0');
+
+  let suffix = '';
+  if (typeof randomSuffix === 'string' && /^[A-Z0-9]{4}$/.test(randomSuffix.trim().toUpperCase())) {
+    suffix = randomSuffix.trim().toUpperCase();
+  } else {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    for (let i = 0; i < 4; i += 1) {
+      suffix += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    }
+  }
+
+  return `APP-${year}${month}${day}-${suffix}`;
+}
+
+/**
+ * Builds edit and direct PDF export URLs for a Google Doc ID.
+ * @param {string} docId
+ * @returns {{ docUrl: string, pdfUrl: string }}
+ */
+function buildDocUrls(docId) {
+  if (!isNonEmptyString(docId)) {
+    throw new Error('docId deve ser uma string não vazia.');
+  }
+  const cleanId = encodeURIComponent(docId.trim());
+  return {
+    docUrl: `https://docs.google.com/document/d/${cleanId}/edit`,
+    pdfUrl: `https://docs.google.com/document/d/${cleanId}/export?format=pdf`,
+  };
+}
+
+/**
+ * Deterministic key-sorted JSON serializer for stable idempotency hashing.
+ * @param {*} value
+ * @returns {string}
+ */
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  const keys = Object.keys(value).sort();
+  const entries = keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`);
+  return `{${entries.join(',')}}`;
+}
+
+/**
+ * Builds a short deterministic cache key (safe for Apps Script CacheService 250-char limit).
+ * @param {string} operation
+ * @param {*} payload
+ * @returns {string}
+ */
+function buildIdempotencyKey(operation, payload) {
+  const safeOp = isNonEmptyString(operation) ? operation.trim().replace(/[^A-Za-z0-9_-]/g, '_') : 'op';
+  const serialized = `${safeOp}:${stableStringify(payload === undefined ? null : payload)}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < serialized.length; i += 1) {
+    hash ^= serialized.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, '0');
+  return `idem:${safeOp}:${hex}`;
+}
+
+/**
+ * Serializes a Backlog application record into the exact 14-column array (A..N).
+ * @param {object} record
+ * @returns {Array<string>}
+ */
+function serializeBacklogRow(record) {
+  if (!isPlainObject(record)) {
+    throw new Error('Registro do backlog deve ser um objeto.');
+  }
+
+  const keywords = Array.isArray(record.keywords) ? record.keywords : [];
+  const highlights = Array.isArray(record.highlightsSummary)
+    ? record.highlightsSummary.join('\n')
+    : (typeof record.highlightsSummary === 'string' ? record.highlightsSummary : '');
+  const metadata = isPlainObject(record.metadata) ? record.metadata : {};
+
+  return [
+    typeof record.id === 'string' ? record.id : '',
+    typeof record.createdAt === 'string' ? record.createdAt : '',
+    typeof record.company === 'string' ? record.company : '',
+    typeof record.role === 'string' ? record.role : '',
+    record.language === 'EN' ? 'EN' : 'PT',
+    isValidApplicationStatus(record.status) ? record.status : 'Gerado',
+    typeof record.jobUrl === 'string' ? record.jobUrl : '',
+    typeof record.docUrl === 'string' ? record.docUrl : '',
+    typeof record.pdfUrl === 'string' ? record.pdfUrl : '',
+    JSON.stringify(keywords),
+    highlights,
+    typeof record.gapsSummary === 'string' ? record.gapsSummary : '',
+    typeof record.notes === 'string' ? record.notes : '',
+    JSON.stringify(metadata),
+  ];
+}
+
+/**
+ * Deserializes a 14-column Backlog row (A..N) into a structured application object.
+ * @param {Array<*>} row
+ * @returns {object}
+ */
+function deserializeBacklogRow(row) {
+  const safeRow = Array.isArray(row) ? row : [];
+  const cell = (idx) => (safeRow[idx] === null || safeRow[idx] === undefined ? '' : String(safeRow[idx]));
+
+  let keywords = [];
+  if (isNonEmptyString(cell(9))) {
+    try {
+      const parsedKeywords = JSON.parse(cell(9));
+      if (Array.isArray(parsedKeywords)) {
+        keywords = parsedKeywords;
+      }
+    } catch {
+      keywords = [];
+    }
+  }
+
+  let metadata = {};
+  if (isNonEmptyString(cell(13))) {
+    try {
+      const parsedMeta = JSON.parse(cell(13));
+      if (isPlainObject(parsedMeta)) {
+        metadata = parsedMeta;
+      }
+    } catch {
+      metadata = {};
+    }
+  }
+
+  const rawStatus = cell(5);
+  return {
+    id: cell(0),
+    createdAt: cell(1),
+    company: cell(2),
+    role: cell(3),
+    language: cell(4) === 'EN' ? 'EN' : 'PT',
+    status: isValidApplicationStatus(rawStatus) ? rawStatus : 'Gerado',
+    jobUrl: cell(6),
+    docUrl: cell(7),
+    pdfUrl: cell(8),
+    keywords,
+    highlightsSummary: cell(10),
+    gapsSummary: cell(11),
+    notes: cell(12),
+    metadata,
+  };
+}
+
+/**
  * Calculates the given percentile over an array of numeric values.
  * @param {number[]} values
  * @param {number} percentile Value in [0, 100].
@@ -414,7 +763,13 @@ if (typeof module !== 'undefined' && module.exports) {
     APPLICATION_STATUSES,
     BOOKMARKLET_PREFIX,
     MAX_BOOKMARKLET_TEXT_LENGTH,
+    MAX_SCREENSHOT_COUNT,
+    MAX_IMAGE_BASE64_LENGTH,
+    MIN_EXTRACTED_TEXT_LENGTH,
+    ALLOWED_IMAGE_MIME_TYPES,
     RETRYABLE_HTTP_STATUSES,
+    SECTION_HEADINGS,
+    BACKLOG_HEADERS,
     isValidApplicationStatus,
     isValidHttpUrl,
     sanitizeFilenameSegment,
@@ -424,6 +779,15 @@ if (typeof module !== 'undefined' && module.exports) {
     validateGeneratedResume,
     isRetryableHttpStatus,
     calculateBackoffDelayMs,
+    cleanExtractedText,
+    validateImageAttachments,
+    getSectionHeading,
+    detectSectionAnchor,
+    generateApplicationId,
+    buildDocUrls,
+    buildIdempotencyKey,
+    serializeBacklogRow,
+    deserializeBacklogRow,
     calculatePercentile,
     computeSliSummary,
   };

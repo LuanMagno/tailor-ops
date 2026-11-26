@@ -6,7 +6,9 @@ const {
   APPLICATION_STATUSES,
   BOOKMARKLET_PREFIX,
   MAX_BOOKMARKLET_TEXT_LENGTH,
+  MAX_SCREENSHOT_COUNT,
   RETRYABLE_HTTP_STATUSES,
+  BACKLOG_HEADERS,
   isValidApplicationStatus,
   isValidHttpUrl,
   sanitizeFilenameSegment,
@@ -16,6 +18,15 @@ const {
   validateGeneratedResume,
   isRetryableHttpStatus,
   calculateBackoffDelayMs,
+  cleanExtractedText,
+  validateImageAttachments,
+  getSectionHeading,
+  detectSectionAnchor,
+  generateApplicationId,
+  buildDocUrls,
+  buildIdempotencyKey,
+  serializeBacklogRow,
+  deserializeBacklogRow,
 } = require('../src/PureLogic.gs');
 
 describe('APPLICATION_STATUSES and isValidApplicationStatus', () => {
@@ -311,5 +322,133 @@ describe('isRetryableHttpStatus and calculateBackoffDelayMs', () => {
     expect(() => calculateBackoffDelayMs(-1)).toThrow(RangeError);
     expect(() => calculateBackoffDelayMs(1.5)).toThrow(RangeError);
     expect(() => calculateBackoffDelayMs('0')).toThrow(RangeError);
+  });
+});
+
+describe('cleanExtractedText and validateImageAttachments', () => {
+  it('normalizes line breaks, collapses excessive blank lines, and caps length', () => {
+    const raw = '  Linha 1\r\n\r\n\r\n\r\nLinha 2  ';
+    expect(cleanExtractedText(raw)).toBe('Linha 1\n\nLinha 2');
+    expect(cleanExtractedText('abcdef', 3)).toBe('abc');
+    expect(cleanExtractedText(null)).toBe('');
+  });
+
+  it('validates up to 4 Base64 images and strips data URL prefixes', () => {
+    const result = validateImageAttachments([
+      { mimeType: 'image/png', data: 'QUJD' },
+      { data: 'data:image/jpeg;base64,REVG' },
+    ]);
+    expect(result).toEqual({
+      valid: true,
+      normalized: [
+        { mimeType: 'image/png', data: 'QUJD' },
+        { mimeType: 'image/jpeg', data: 'REVG' },
+      ],
+      errors: [],
+    });
+  });
+
+  it('rejects empty arrays, >4 images, unsupported mime types, and invalid base64', () => {
+    expect(validateImageAttachments([]).valid).toBe(false);
+    expect(
+      validateImageAttachments(
+        Array.from({ length: MAX_SCREENSHOT_COUNT + 1 }, () => ({ mimeType: 'image/png', data: 'QUJD' }))
+      ).valid
+    ).toBe(false);
+    expect(validateImageAttachments([{ mimeType: 'image/gif', data: 'QUJD' }]).valid).toBe(false);
+    expect(validateImageAttachments([{ mimeType: 'image/png', data: 'not-valid!' }]).valid).toBe(false);
+  });
+});
+
+describe('getSectionHeading and detectSectionAnchor', () => {
+  it('returns PT and EN headings and detects anchors case/accent-insensitively', () => {
+    expect(getSectionHeading('summary', 'PT')).toBe('RESUMO PROFISSIONAL');
+    expect(getSectionHeading('courses', 'EN')).toBe('RELEVANT COURSEWORK');
+    expect(() => getSectionHeading('unknown', 'PT')).toThrow();
+
+    expect(detectSectionAnchor('  experiência profissional  ')).toBe('experience');
+    expect(detectSectionAnchor('TECHNICAL SKILLS')).toBe('skills');
+    expect(detectSectionAnchor('Formacao Academica')).toBe('education');
+    expect(detectSectionAnchor('Qualquer outro texto')).toBeNull();
+  });
+});
+
+describe('generateApplicationId, buildDocUrls, and buildIdempotencyKey', () => {
+  it('formats APP-YYYYMMDD-XXXX deterministically when date and suffix are supplied', () => {
+    const fixedDate = new Date(2026, 10, 26);
+    expect(generateApplicationId(fixedDate, 'ab12')).toBe('APP-20261126-AB12');
+    expect(generateApplicationId(fixedDate)).toMatch(/^APP-20261126-[A-Z0-9]{4}$/);
+  });
+
+  it('builds edit and direct PDF export URLs from a Google Doc ID', () => {
+    expect(buildDocUrls('doc_123')).toEqual({
+      docUrl: 'https://docs.google.com/document/d/doc_123/edit',
+      pdfUrl: 'https://docs.google.com/document/d/doc_123/export?format=pdf',
+    });
+    expect(() => buildDocUrls('')).toThrow();
+  });
+
+  it('produces deterministic compact idempotency keys independent of object key order', () => {
+    const key1 = buildIdempotencyKey('analyzeJob', { a: 1, b: { y: 2, x: 3 } });
+    const key2 = buildIdempotencyKey('analyzeJob', { b: { x: 3, y: 2 }, a: 1 });
+    const key3 = buildIdempotencyKey('analyzeJob', { a: 2, b: { x: 3, y: 2 } });
+    expect(key1).toBe(key2);
+    expect(key1).not.toBe(key3);
+    expect(key1.length).toBeLessThan(64);
+  });
+});
+
+describe('serializeBacklogRow and deserializeBacklogRow', () => {
+  it('round-trips all 14 columns A..N cleanly', () => {
+    expect(BACKLOG_HEADERS.length).toBe(14);
+    const record = {
+      id: 'APP-20261126-X9K2',
+      createdAt: '2026-11-26T00:30:00-03:00',
+      company: 'Nubank',
+      role: 'Software Engineer',
+      language: 'EN',
+      status: 'Aplicado',
+      jobUrl: 'https://nubank.com.br/jobs/1',
+      docUrl: 'https://docs.google.com/document/d/abc/edit',
+      pdfUrl: 'https://docs.google.com/document/d/abc/export?format=pdf',
+      keywords: ['Clojure', 'Kafka', 'Distributed Systems'],
+      highlightsSummary: ['Destaque em mensageria', 'APIs resilientes'],
+      gapsSummary: 'Clojure marcado como gap real',
+      notes: 'Entrevista agendada',
+      metadata: { modelUsed: 'gemini-pro' },
+    };
+
+    const row = serializeBacklogRow(record);
+    expect(row.length).toBe(14);
+    expect(row[0]).toBe('APP-20261126-X9K2');
+    expect(row[9]).toBe(JSON.stringify(record.keywords));
+
+    const parsed = deserializeBacklogRow(row);
+    expect(parsed).toEqual({
+      ...record,
+      highlightsSummary: 'Destaque em mensageria\nAPIs resilientes',
+    });
+  });
+
+  it('handles malformed JSON cells safely when deserializing', () => {
+    const parsed = deserializeBacklogRow([
+      'APP-20261126-0001',
+      '2026-11-26T00:30:00-03:00',
+      'Acme',
+      'Dev',
+      'PT',
+      'StatusInvalido',
+      'https://acme.com/vaga',
+      'https://docs.google.com/d/1/edit',
+      'https://docs.google.com/d/1/export?format=pdf',
+      '{bad-json',
+      'Resumo',
+      'Gaps',
+      'Notas',
+      'not-json',
+    ]);
+    expect(parsed.status).toBe('Gerado');
+    expect(parsed.keywords).toEqual([]);
+    expect(parsed.metadata).toEqual({});
   });
 });
